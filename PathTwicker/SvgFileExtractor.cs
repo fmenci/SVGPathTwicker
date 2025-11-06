@@ -1,13 +1,29 @@
 ﻿
+/*
+ * 
+
+Copyright (c) 2025 Franck Menci
+
+This file is part of SVGPathTwicker.
+
+SVGPathTwicker is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, version 3.
+
+SVGPathTwicker is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with Foobar. If not, see <https://www.gnu.org/licenses/>.  
+
+ * */
+
+using System.Text;
 using System.Text.RegularExpressions;
 
-namespace PathTwicker
+namespace SVGPathTwicker
 {
     public class SvgFileExtractor
     {
         private const string STARTUPDIR = @"C:\Temp\Svg\";
-        private List<SvgPathMapElement> AllPath = [];
-        private Regex rexDrawing = new(@"\s+d=\u0022(?<pathdata>[0-9mMzZlLcChHvVaAqQtTsS ,.-]+)\u0022", RegexOptions.IgnoreCase);
+        private readonly List<SvgPathMapElement> AllPath = [];
+        private readonly Regex rexDrawing = new(@"\s+d=\u0022(?<pathdata>[0-9mMzZlLcChHvVaAqQtTsSeE ,.-]+)\u0022", RegexOptions.IgnoreCase);
 
         public SvgFileExtractor() { 
             
@@ -25,42 +41,35 @@ namespace PathTwicker
 
         private async Task ReadAsync()
         {
+            StringBuilder strOutput = new ();
+            strOutput.Append("Name;Row;");
+            strOutput.Append(SvgPathMapElement.CSVHeader);
             int irow = 0;
             string[] files = Directory.GetFiles(STARTUPDIR, "*.svg");
+            Console.WriteLine("fetching all *.svg files from {0}", STARTUPDIR);
             foreach (string file in files)
             {
                 string filename = Path.GetFileNameWithoutExtension(file);
-                //Console.WriteLine(filename);
                 string robotfile = await File.ReadAllTextAsync(file);
                 var m = rexDrawing.Matches(robotfile);
                 foreach (Match m2 in m)
                 {
-                    Console.Write("\"{0}\";", filename);
-                    Console.Write("{0};", ++irow);
+                    strOutput.Append('"');
+                    strOutput.Append(filename);
+                    strOutput.Append('"');
+                    strOutput.Append(';');
+                    strOutput.Append(++irow);
+                    strOutput.Append(';');
                     string drawingPath = m2.Groups["pathdata"].Value;
                     SvgPathMapElement svgPathMap = new(drawingPath);
-                    Console.Write(svgPathMap.ToCsv());
-                    //AllPath.Add(svgPathMap);
-                    Console.Write(Environment.NewLine);
+                    svgPathMap.AddCsv(ref strOutput);
                 }
-                //Console.WriteLine("==");
             }
 
-            //irow = 0;
-            //foreach (var pa in AllPath)
-            //{
-            //    Console.Write("{0} - ", ++irow);
-            //    Console.WriteLine(pa.OriginalPath);
-            //    Console.WriteLine(pa.ReadImprovedPath());
-            //    Console.WriteLine(pa.ToString());
-            //}
-            //Console.WriteLine("==");
-            //Console.Write(Environment.NewLine);
-            //foreach (var pa in AllPath)
-            //{
-            //    Console.WriteLine(pa.ToCsv());
-            //}
-            //Console.WriteLine("==");
+            using StreamWriter sw = new(Path.Combine(STARTUPDIR, "export_svg.csv"));
+            await sw.WriteAsync(strOutput.ToString());
+            Console.WriteLine("SVG Path extract ready");
+            Console.WriteLine("you may press `enter` to quit");
         }
     }
 }
