@@ -18,6 +18,9 @@ Console.WriteLine("SVG path optimizer, by Franck Menci \u00A9 2025");
 Console.WriteLine("read file from Inkscape and aims to improve SVG path `d` attribute");
 
 SvgFileExtractor fileExtractor = new();
-fileExtractor.Init();
 
+Task t = Task.Run(async () => { await fileExtractor.Init(); });
+await t;
+
+Console.WriteLine("you may press `enter` to quit");
 Console.ReadLine();

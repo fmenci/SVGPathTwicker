@@ -30,8 +30,9 @@ namespace SVGPathTwicker
 
     public class SvgPathMapElement
     {
-        public SvgPathMapElement(string originalPath)
+        public SvgPathMapElement(int translateX, int translateY, string originalPath)
         {
+            PathOrigin.Offset(translateX, translateY);
             OriginalPath = originalPath;
             Init();
         }
@@ -39,11 +40,11 @@ namespace SVGPathTwicker
         public static string CSVHeader {
             get
             {
-                StringBuilder header = new StringBuilder();
+                StringBuilder header = new ();
                 header.Append(nameof(OriginalPath));
                 header.Append(";Delta X;Delta Y;Label X;Label Y;Box X;Box Y;WIdth;Height;");
                 header.Append(nameof(ImprovedPath));
-                header.Append(';');
+                header.Append(";CSS class; CSS style;");
                 header.Append(Environment.NewLine);
                 return header.ToString();
             }
@@ -79,7 +80,6 @@ namespace SVGPathTwicker
             source.Append(ImprovedPath);
             source.Append('"');
             source.Append(';');
-            source.Append(Environment.NewLine);
         }
 
         public string OriginalPath { get; private set; } = string.Empty;
@@ -153,23 +153,23 @@ namespace SVGPathTwicker
                         InAbsoluteCoord = (plot == "M");
                         PenMove = PenMovementType.Line;
                         PathNumber++;
+                        buffer_point1 = ReadPlot(arrInPath, ref ipos);
+                        if (InAbsoluteCoord)
+                        {
+                            buffer_point1 = ToRelativeCoord(buffer_point1);
+                        }
+                        MovePen(buffer_point1);
                         if (PathNumber == 1)
                         {
-                            PathOrigin = ReadPlot(arrInPath,ref ipos);
-                            PathStartPoint = Point.Empty;
-                            ImprovedPath.Append("m 0,0");
+                            PathStartPoint = PathOrigin;
+                            PathOrigin.Offset(buffer_point1);
+                            buffer_point1 = Point.Empty;
                         }
                         else
                         {
-                            buffer_point1 = ReadPlot(arrInPath, ref ipos);
-                            if (InAbsoluteCoord)
-                            {
-                                buffer_point1 = ToRelativeCoord(buffer_point1);
-                            }
-                            MovePen(buffer_point1);
                             PathStartPoint = PenOnPaper;
-                            ImprovedPath.AppendFormat(" m {0},{1}", buffer_point1.X, buffer_point1.Y);
                         }
+                        ImprovedPath.AppendFormat(" m {0},{1}", buffer_point1.X, buffer_point1.Y);
                         break;
                     case "z":
                     case "Z": // all is converted to relative coordinate anyway
@@ -211,17 +211,20 @@ namespace SVGPathTwicker
                         break;
                     case "h":
                     case "H":
+                        buffer_integer = ReadValue(arrInPath[++ipos]);
                         InAbsoluteCoord = (plot == "H");
                         PenMove = PenMovementType.Horizontal;
-                        buffer_integer = ReadValue(arrInPath[++ipos]);
                         if (InAbsoluteCoord)
                         {
                             buffer_integer -= PathOrigin.X;
                             buffer_integer -= PenOnPaper.X;
                         }
                         MovePen(new(buffer_integer, 0));
-                        ImprovedPath.Append(" h ");
-                        ImprovedPath.Append(buffer_integer);
+                        if(Math.Abs(buffer_integer) > 0)
+                        {
+                            ImprovedPath.Append(" h ");
+                            ImprovedPath.Append(buffer_integer);
+                        }
                         break;
                     case "v":
                     case "V":
@@ -234,8 +237,11 @@ namespace SVGPathTwicker
                             buffer_integer -= PenOnPaper.Y;
                         }
                         MovePen(new(0, buffer_integer));
-                        ImprovedPath.Append(" v ");
-                        ImprovedPath.Append(buffer_integer);
+                        if(Math.Abs(buffer_integer) > 0)
+                        {
+                            ImprovedPath.Append(" v ");
+                            ImprovedPath.Append(buffer_integer);
+                        }
                         break;
                     case "a":
                     case "A":
@@ -298,8 +304,11 @@ namespace SVGPathTwicker
                                         buffer_integer -= PenOnPaper.X;
                                     }
                                     MovePen(new(buffer_integer, 0));
-                                    ImprovedPath.Append(' ');
-                                    ImprovedPath.Append(buffer_integer);
+                                    if(Math.Abs(buffer_integer) > 0)
+                                    {
+                                        ImprovedPath.Append(' ');
+                                        ImprovedPath.Append(buffer_integer);
+                                    }
                                     break;
                                 case PenMovementType.Vertical:
                                     buffer_integer = ReadValue(plot);
@@ -309,8 +318,11 @@ namespace SVGPathTwicker
                                         buffer_integer -= PenOnPaper.Y;
                                     }
                                     MovePen(new(0, buffer_integer));
-                                    ImprovedPath.Append(' ');
-                                    ImprovedPath.Append(buffer_integer);
+                                    if(Math.Abs(buffer_integer) > 0)
+                                    {
+                                        ImprovedPath.Append(' ');
+                                        ImprovedPath.Append(buffer_integer);
+                                    }
                                     break;
                                 case PenMovementType.Arc:
                                     --ipos; // one step back
