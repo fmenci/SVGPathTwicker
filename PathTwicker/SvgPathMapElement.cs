@@ -168,8 +168,9 @@ namespace SVGPathTwicker
                         else
                         {
                             PathStartPoint = PenOnPaper;
+                            ImprovedPath.Append(' ');
                         }
-                        ImprovedPath.AppendFormat(" m {0},{1}", buffer_point1.X, buffer_point1.Y);
+                        ImprovedPath.AppendFormat("m {0},{1}", buffer_point1.X, buffer_point1.Y);
                         break;
                     case "z":
                     case "Z": // all is converted to relative coordinate anyway
