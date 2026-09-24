@@ -1,5 +1,5 @@
-﻿/*
- * 
+/*
+ *
 
 Copyright (c) 2025 Franck Menci
 
@@ -9,11 +9,12 @@ SVGPathTwicker is free software: you can redistribute it and/or modify it under 
 
 SVGPathTwicker is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
 
-You should have received a copy of the GNU General Public License along with Foobar. If not, see <https://www.gnu.org/licenses/>.  
+You should have received a copy of the GNU General Public License along with Foobar. If not, see <https://www.gnu.org/licenses/>.
 
  * */
 
 using System.Drawing;
+using System.Globalization;
 using System.Text;
 
 namespace SVGPathTwicker
@@ -142,23 +143,25 @@ namespace SVGPathTwicker
         private void Init()
         {
             bool InAbsoluteCoord = false;
-            string[] arrInPath = OriginalPath.Split(' ');
-            int arrLength = arrInPath.Length;
-            int ipos = 0;
+            string path = OriginalPath;
+            int pos = 0;
+            int len = path.Length;
             int buffer_integer;
             bool buffer_arc_lg, buffer_sweep;
             Point buffer_point1, buffer_point_P2, buffer_point_P3;
-            while (ipos < arrLength)
+            bool aborted = false;
+
+            while (!aborted && pos < len)
             {
-                string plot = arrInPath[ipos];
-                switch (plot)
+                char? command = ReadCommand(path, ref pos);
+                switch (command)
                 {
-                    case "m":
-                    case "M":
-                        InAbsoluteCoord = (plot == "M");
+                    case 'm':
+                    case 'M':
+                        InAbsoluteCoord = (command == 'M');
                         PenMove = PenMovementType.Line;
                         PathNumber++;
-                        buffer_point1 = ReadPlot(arrInPath, ref ipos);
+                        if (!TryReadPoint(path, ref pos, out buffer_point1)) { ReportParseFailure(path, pos, "moveto"); aborted = true; break; }
                         if (InAbsoluteCoord)
                         {
                             buffer_point1 = ToRelativeCoord(buffer_point1);
@@ -183,18 +186,18 @@ namespace SVGPathTwicker
                         ImprovedPath.AppendFormat("m {0},{1}", buffer_point1.X, buffer_point1.Y);
                         SubpathClosed = false;
                         break;
-                    case "z":
-                    case "Z": // all is converted to relative coordinate anyway
+                    case 'z':
+                    case 'Z': // all is converted to relative coordinate anyway
                         PenMove = PenMovementType.None;
                         PenOnPaper = PathStartPoint;
                         ImprovedPath.Append(" z");
                         SubpathClosed = true;
                         break;
-                    case "l":
-                    case "L":
-                        InAbsoluteCoord = (plot == "L");
+                    case 'l':
+                    case 'L':
+                        InAbsoluteCoord = (command == 'L');
                         PenMove = PenMovementType.Line;
-                        buffer_point1 = ReadPlot(arrInPath, ref ipos);
+                        if (!TryReadPoint(path, ref pos, out buffer_point1)) { ReportParseFailure(path, pos, "lineto"); aborted = true; break; }
                         if (InAbsoluteCoord)
                         {
                             buffer_point1 = ToRelativeCoord(buffer_point1);
@@ -202,13 +205,14 @@ namespace SVGPathTwicker
                         MovePen(buffer_point1);
                         ImprovedPath.AppendFormat(" l {0},{1}", buffer_point1.X, buffer_point1.Y);
                         break;
-                    case "c":
-                    case "C":
-                        InAbsoluteCoord = (plot == "C");
+                    case 'c':
+                    case 'C':
+                        InAbsoluteCoord = (command == 'C');
                         PenMove = PenMovementType.CubicBezier;
-                        buffer_point1 = ReadPlot(arrInPath, ref ipos);
-                        buffer_point_P2 = ReadPlot(arrInPath, ref ipos);
-                        buffer_point_P3 = ReadPlot(arrInPath, ref ipos);
+                        if (!TryReadPoint(path, ref pos, out buffer_point1) ||
+                            !TryReadPoint(path, ref pos, out buffer_point_P2) ||
+                            !TryReadPoint(path, ref pos, out buffer_point_P3))
+                        { ReportParseFailure(path, pos, "curveto"); aborted = true; break; }
                         if (InAbsoluteCoord)
                         {
                             // convert to relative coords
@@ -222,11 +226,11 @@ namespace SVGPathTwicker
                         ImprovedPath.AppendFormat(" {0},{1}", buffer_point_P2.X, buffer_point_P2.Y);
                         ImprovedPath.AppendFormat(" {0},{1}", buffer_point_P3.X, buffer_point_P3.Y);
                         break;
-                    case "h":
-                    case "H":
-                        buffer_integer = ReadValue(arrInPath[++ipos]);
-                        InAbsoluteCoord = (plot == "H");
+                    case 'h':
+                    case 'H':
+                        InAbsoluteCoord = (command == 'H');
                         PenMove = PenMovementType.Horizontal;
+                        if (!TryReadCoordinate(path, ref pos, out buffer_integer)) { ReportParseFailure(path, pos, "horizontal lineto"); aborted = true; break; }
                         if (InAbsoluteCoord)
                         {
                             buffer_integer -= PathOrigin.X;
@@ -239,11 +243,11 @@ namespace SVGPathTwicker
                             ImprovedPath.Append(buffer_integer);
                         }
                         break;
-                    case "v":
-                    case "V":
-                        InAbsoluteCoord = (plot == "V");
+                    case 'v':
+                    case 'V':
+                        InAbsoluteCoord = (command == 'V');
                         PenMove = PenMovementType.Vertical;
-                        buffer_integer = ReadValue(arrInPath[++ipos]);
+                        if (!TryReadCoordinate(path, ref pos, out buffer_integer)) { ReportParseFailure(path, pos, "vertical lineto"); aborted = true; break; }
                         if (InAbsoluteCoord)
                         {
                             buffer_integer -= PathOrigin.Y;
@@ -256,15 +260,17 @@ namespace SVGPathTwicker
                             ImprovedPath.Append(buffer_integer);
                         }
                         break;
-                    case "a":
-                    case "A":
-                        InAbsoluteCoord = (plot == "A");
+                    case 'a':
+                    case 'A':
+                        InAbsoluteCoord = (command == 'A');
                         PenMove = PenMovementType.Arc;
-                        buffer_point1 = ReadPlot(arrInPath, ref ipos);
-                        buffer_integer = ReadValue(arrInPath[++ipos]);
-                        buffer_arc_lg = ReadArcComponent(arrInPath[++ipos]);
-                        buffer_sweep = ReadArcComponent(arrInPath[++ipos]);
-                        buffer_point_P2 = ReadPlot(arrInPath, ref ipos);
+                        if (!TryReadPoint(path, ref pos, out buffer_point1) ||
+                            !TryReadNumber(path, ref pos, out double rotation) ||
+                            !TryReadFlag(path, ref pos, out buffer_arc_lg) ||
+                            !TryReadFlag(path, ref pos, out buffer_sweep) ||
+                            !TryReadPoint(path, ref pos, out buffer_point_P2))
+                        { ReportParseFailure(path, pos, "elliptical arc"); aborted = true; break; }
+                        buffer_integer = (int)rotation;
                         if (InAbsoluteCoord)
                         {
                             buffer_point_P2 = ToRelativeCoord(buffer_point_P2);
@@ -277,12 +283,13 @@ namespace SVGPathTwicker
                         ImprovedPath.AppendFormat(" {0}", buffer_sweep ? 1 : 0);
                         ImprovedPath.AppendFormat(" {0},{1}", buffer_point_P2.X, buffer_point_P2.Y);
                         break;
-                    case "q":
-                    case "Q":
-                        InAbsoluteCoord = (plot == "Q");
+                    case 'q':
+                    case 'Q':
+                        InAbsoluteCoord = (command == 'Q');
                         PenMove = PenMovementType.QuadraticBezier;
-                        buffer_point1 = ReadPlot(arrInPath, ref ipos);
-                        buffer_point_P2 = ReadPlot(arrInPath, ref ipos);
+                        if (!TryReadPoint(path, ref pos, out buffer_point1) ||
+                            !TryReadPoint(path, ref pos, out buffer_point_P2))
+                        { ReportParseFailure(path, pos, "quadratic curveto"); aborted = true; break; }
                         if (InAbsoluteCoord)
                         {
                             buffer_point1 = ToRelativeCoord(buffer_point1);
@@ -293,11 +300,11 @@ namespace SVGPathTwicker
                         ImprovedPath.AppendFormat(" {0},{1}", buffer_point1.X, buffer_point1.Y);
                         ImprovedPath.AppendFormat(" {0},{1}", buffer_point_P2.X, buffer_point_P2.Y);
                         break;
-                    case "t":
-                    case "T":
-                        InAbsoluteCoord = (plot == "T");
+                    case 't':
+                    case 'T':
+                        InAbsoluteCoord = (command == 'T');
                         PenMove = PenMovementType.SmoothQuadratic;
-                        buffer_point1 = ReadPlot(arrInPath, ref ipos);
+                        if (!TryReadPoint(path, ref pos, out buffer_point1)) { ReportParseFailure(path, pos, "smooth quadratic curveto"); aborted = true; break; }
                         if (InAbsoluteCoord)
                         {
                             buffer_point1 = ToRelativeCoord(buffer_point1);
@@ -305,12 +312,13 @@ namespace SVGPathTwicker
                         MovePen(buffer_point1);
                         ImprovedPath.AppendFormat(" t {0},{1}", buffer_point1.X, buffer_point1.Y);
                         break;
-                    case "s":
-                    case "S":
-                        InAbsoluteCoord = (plot == "S");
+                    case 's':
+                    case 'S':
+                        InAbsoluteCoord = (command == 'S');
                         PenMove = PenMovementType.SmoothCubic;
-                        buffer_point1 = ReadPlot(arrInPath, ref ipos);
-                        buffer_point_P2 = ReadPlot(arrInPath, ref ipos);
+                        if (!TryReadPoint(path, ref pos, out buffer_point1) ||
+                            !TryReadPoint(path, ref pos, out buffer_point_P2))
+                        { ReportParseFailure(path, pos, "smooth curveto"); aborted = true; break; }
                         if (InAbsoluteCoord)
                         {
                             buffer_point1 = ToRelativeCoord(buffer_point1);
@@ -322,133 +330,125 @@ namespace SVGPathTwicker
                         ImprovedPath.AppendFormat(" {0},{1}", buffer_point_P2.X, buffer_point_P2.Y);
                         break;
                     default:
-                        try
+                        // no explicit command letter here: an implicit repeat of the previous command's
+                        // argument type, per the SVG path grammar (e.g. "m 0,0 10,10" repeats as lineto)
+                        switch (PenMove)
                         {
-                            switch (PenMove)
-                            {
-                                case PenMovementType.Line:
-                                    --ipos; // one step back
-                                    buffer_point1 = ReadPlot(arrInPath, ref ipos);
-                                    if (InAbsoluteCoord)
-                                    {
-                                        buffer_point1 = ToRelativeCoord(buffer_point1);
-                                    }
-                                    MovePen(buffer_point1);
-                                    ImprovedPath.AppendFormat(" {0},{1}", buffer_point1.X, buffer_point1.Y);
-                                    break;
-                                case PenMovementType.CubicBezier:
-                                    --ipos; // one step back
-                                    buffer_point1 = ReadPlot(arrInPath, ref ipos);
-                                    buffer_point_P2 = ReadPlot(arrInPath, ref ipos);
-                                    buffer_point_P3 = ReadPlot(arrInPath, ref ipos);
-                                    if (InAbsoluteCoord)
-                                    {
-                                        // convert to relative coords
-                                        buffer_point1 = ToRelativeCoord(buffer_point1);
-                                        buffer_point_P2 = ToRelativeCoord(buffer_point_P2);
-                                        buffer_point_P3 = ToRelativeCoord(buffer_point_P3);
-                                    }
-                                    MovePen(buffer_point_P3);
-                                    ImprovedPath.AppendFormat(" {0},{1}", buffer_point1.X, buffer_point1.Y);
-                                    ImprovedPath.AppendFormat(" {0},{1}", buffer_point_P2.X, buffer_point_P2.Y);
-                                    ImprovedPath.AppendFormat(" {0},{1}", buffer_point_P3.X, buffer_point_P3.Y);
-                                    break;
-                                case PenMovementType.Horizontal:
-                                    buffer_integer = ReadValue(plot);
-                                    if (InAbsoluteCoord)
-                                    {
-                                        buffer_integer -= PathOrigin.X;
-                                        buffer_integer -= PenOnPaper.X;
-                                    }
-                                    MovePen(new(buffer_integer, 0));
-                                    if(Math.Abs(buffer_integer) > 0)
-                                    {
-                                        ImprovedPath.Append(' ');
-                                        ImprovedPath.Append(buffer_integer);
-                                    }
-                                    break;
-                                case PenMovementType.Vertical:
-                                    buffer_integer = ReadValue(plot);
-                                    if (InAbsoluteCoord)
-                                    {
-                                        buffer_integer -= PathOrigin.Y;
-                                        buffer_integer -= PenOnPaper.Y;
-                                    }
-                                    MovePen(new(0, buffer_integer));
-                                    if(Math.Abs(buffer_integer) > 0)
-                                    {
-                                        ImprovedPath.Append(' ');
-                                        ImprovedPath.Append(buffer_integer);
-                                    }
-                                    break;
-                                case PenMovementType.Arc:
-                                    --ipos; // one step back
-                                    buffer_point1 = ReadPlot(arrInPath, ref ipos);
-                                    buffer_integer = ReadValue(arrInPath[++ipos]);
-                                    buffer_arc_lg = ReadArcComponent(arrInPath[++ipos]);
-                                    buffer_sweep = ReadArcComponent(arrInPath[++ipos]);
-                                    buffer_point_P2 = ReadPlot(arrInPath, ref ipos);
-                                    if (InAbsoluteCoord)
-                                    {
-                                        buffer_point_P2 = ToRelativeCoord(buffer_point_P2);
-                                    }
-                                    MovePen(buffer_point_P2);
-                                    ImprovedPath.AppendFormat(" {0},{1}", buffer_point1.X, buffer_point1.Y);
-                                    ImprovedPath.AppendFormat(" {0}", buffer_integer);
-                                    ImprovedPath.AppendFormat(" {0}", buffer_arc_lg ? 1 : 0);
-                                    ImprovedPath.AppendFormat(" {0}", buffer_sweep ? 1 : 0);
-                                    ImprovedPath.AppendFormat(" {0},{1}", buffer_point_P2.X, buffer_point_P2.Y);
-                                    break;
-                                case PenMovementType.QuadraticBezier:
-                                    --ipos; // one step back
-                                    buffer_point1 = ReadPlot(arrInPath, ref ipos);
-                                    buffer_point_P2 = ReadPlot(arrInPath, ref ipos);
-                                    if (InAbsoluteCoord)
-                                    {
-                                        buffer_point1 = ToRelativeCoord(buffer_point1);
-                                        buffer_point_P2 = ToRelativeCoord(buffer_point_P2);
-                                    }
-                                    MovePen(buffer_point_P2);
-                                    ImprovedPath.AppendFormat(" {0},{1}", buffer_point1.X, buffer_point1.Y);
-                                    ImprovedPath.AppendFormat(" {0},{1}", buffer_point_P2.X, buffer_point_P2.Y);
-                                    break;
-                                case PenMovementType.SmoothQuadratic:
-                                    --ipos; // one step back
-                                    buffer_point1 = ReadPlot(arrInPath, ref ipos);
-                                    if (InAbsoluteCoord)
-                                    {
-                                        buffer_point1 = ToRelativeCoord(buffer_point1);
-                                    }
-                                    MovePen(buffer_point1);
-                                    ImprovedPath.AppendFormat(" {0},{1}", buffer_point1.X, buffer_point1.Y);
-                                    break;
-                                case PenMovementType.SmoothCubic:
-                                    --ipos; // one step back
-                                    buffer_point1 = ReadPlot(arrInPath, ref ipos);
-                                    buffer_point_P2 = ReadPlot(arrInPath, ref ipos);
-                                    if (InAbsoluteCoord)
-                                    {
-                                        buffer_point1 = ToRelativeCoord(buffer_point1);
-                                        buffer_point_P2 = ToRelativeCoord(buffer_point_P2);
-                                    }
-                                    MovePen(buffer_point_P2);
-                                    ImprovedPath.AppendFormat(" {0},{1}", buffer_point1.X, buffer_point1.Y);
-                                    ImprovedPath.AppendFormat(" {0},{1}", buffer_point_P2.X, buffer_point_P2.Y);
-                                    break;
-                                default:
-                                    Console.WriteLine("unrecognised plot {0}", plot);
-                                    break;
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            //
-                            Console.WriteLine("this was not a point");
-                            Console.WriteLine(ex.ToString());
+                            case PenMovementType.Line:
+                                if (!TryReadPoint(path, ref pos, out buffer_point1)) { ReportParseFailure(path, pos, "lineto (implicit)"); aborted = true; break; }
+                                if (InAbsoluteCoord)
+                                {
+                                    buffer_point1 = ToRelativeCoord(buffer_point1);
+                                }
+                                MovePen(buffer_point1);
+                                ImprovedPath.AppendFormat(" {0},{1}", buffer_point1.X, buffer_point1.Y);
+                                break;
+                            case PenMovementType.CubicBezier:
+                                if (!TryReadPoint(path, ref pos, out buffer_point1) ||
+                                    !TryReadPoint(path, ref pos, out buffer_point_P2) ||
+                                    !TryReadPoint(path, ref pos, out buffer_point_P3))
+                                { ReportParseFailure(path, pos, "curveto (implicit)"); aborted = true; break; }
+                                if (InAbsoluteCoord)
+                                {
+                                    // convert to relative coords
+                                    buffer_point1 = ToRelativeCoord(buffer_point1);
+                                    buffer_point_P2 = ToRelativeCoord(buffer_point_P2);
+                                    buffer_point_P3 = ToRelativeCoord(buffer_point_P3);
+                                }
+                                MovePen(buffer_point_P3);
+                                ImprovedPath.AppendFormat(" {0},{1}", buffer_point1.X, buffer_point1.Y);
+                                ImprovedPath.AppendFormat(" {0},{1}", buffer_point_P2.X, buffer_point_P2.Y);
+                                ImprovedPath.AppendFormat(" {0},{1}", buffer_point_P3.X, buffer_point_P3.Y);
+                                break;
+                            case PenMovementType.Horizontal:
+                                if (!TryReadCoordinate(path, ref pos, out buffer_integer)) { ReportParseFailure(path, pos, "horizontal lineto (implicit)"); aborted = true; break; }
+                                if (InAbsoluteCoord)
+                                {
+                                    buffer_integer -= PathOrigin.X;
+                                    buffer_integer -= PenOnPaper.X;
+                                }
+                                MovePen(new(buffer_integer, 0));
+                                if(Math.Abs(buffer_integer) > 0)
+                                {
+                                    ImprovedPath.Append(' ');
+                                    ImprovedPath.Append(buffer_integer);
+                                }
+                                break;
+                            case PenMovementType.Vertical:
+                                if (!TryReadCoordinate(path, ref pos, out buffer_integer)) { ReportParseFailure(path, pos, "vertical lineto (implicit)"); aborted = true; break; }
+                                if (InAbsoluteCoord)
+                                {
+                                    buffer_integer -= PathOrigin.Y;
+                                    buffer_integer -= PenOnPaper.Y;
+                                }
+                                MovePen(new(0, buffer_integer));
+                                if(Math.Abs(buffer_integer) > 0)
+                                {
+                                    ImprovedPath.Append(' ');
+                                    ImprovedPath.Append(buffer_integer);
+                                }
+                                break;
+                            case PenMovementType.Arc:
+                                if (!TryReadPoint(path, ref pos, out buffer_point1) ||
+                                    !TryReadNumber(path, ref pos, out double rotationImplicit) ||
+                                    !TryReadFlag(path, ref pos, out buffer_arc_lg) ||
+                                    !TryReadFlag(path, ref pos, out buffer_sweep) ||
+                                    !TryReadPoint(path, ref pos, out buffer_point_P2))
+                                { ReportParseFailure(path, pos, "elliptical arc (implicit)"); aborted = true; break; }
+                                buffer_integer = (int)rotationImplicit;
+                                if (InAbsoluteCoord)
+                                {
+                                    buffer_point_P2 = ToRelativeCoord(buffer_point_P2);
+                                }
+                                MovePen(buffer_point_P2);
+                                ImprovedPath.AppendFormat(" {0},{1}", buffer_point1.X, buffer_point1.Y);
+                                ImprovedPath.AppendFormat(" {0}", buffer_integer);
+                                ImprovedPath.AppendFormat(" {0}", buffer_arc_lg ? 1 : 0);
+                                ImprovedPath.AppendFormat(" {0}", buffer_sweep ? 1 : 0);
+                                ImprovedPath.AppendFormat(" {0},{1}", buffer_point_P2.X, buffer_point_P2.Y);
+                                break;
+                            case PenMovementType.QuadraticBezier:
+                                if (!TryReadPoint(path, ref pos, out buffer_point1) ||
+                                    !TryReadPoint(path, ref pos, out buffer_point_P2))
+                                { ReportParseFailure(path, pos, "quadratic curveto (implicit)"); aborted = true; break; }
+                                if (InAbsoluteCoord)
+                                {
+                                    buffer_point1 = ToRelativeCoord(buffer_point1);
+                                    buffer_point_P2 = ToRelativeCoord(buffer_point_P2);
+                                }
+                                MovePen(buffer_point_P2);
+                                ImprovedPath.AppendFormat(" {0},{1}", buffer_point1.X, buffer_point1.Y);
+                                ImprovedPath.AppendFormat(" {0},{1}", buffer_point_P2.X, buffer_point_P2.Y);
+                                break;
+                            case PenMovementType.SmoothQuadratic:
+                                if (!TryReadPoint(path, ref pos, out buffer_point1)) { ReportParseFailure(path, pos, "smooth quadratic curveto (implicit)"); aborted = true; break; }
+                                if (InAbsoluteCoord)
+                                {
+                                    buffer_point1 = ToRelativeCoord(buffer_point1);
+                                }
+                                MovePen(buffer_point1);
+                                ImprovedPath.AppendFormat(" {0},{1}", buffer_point1.X, buffer_point1.Y);
+                                break;
+                            case PenMovementType.SmoothCubic:
+                                if (!TryReadPoint(path, ref pos, out buffer_point1) ||
+                                    !TryReadPoint(path, ref pos, out buffer_point_P2))
+                                { ReportParseFailure(path, pos, "smooth curveto (implicit)"); aborted = true; break; }
+                                if (InAbsoluteCoord)
+                                {
+                                    buffer_point1 = ToRelativeCoord(buffer_point1);
+                                    buffer_point_P2 = ToRelativeCoord(buffer_point_P2);
+                                }
+                                MovePen(buffer_point_P2);
+                                ImprovedPath.AppendFormat(" {0},{1}", buffer_point1.X, buffer_point1.Y);
+                                ImprovedPath.AppendFormat(" {0},{1}", buffer_point_P2.X, buffer_point_P2.Y);
+                                break;
+                            default:
+                                ReportParseFailure(path, pos, "no active command");
+                                aborted = true;
+                                break;
                         }
                         break;
                 }
-                ipos++;
             }
             if (!SubpathClosed)
             {
@@ -458,68 +458,110 @@ namespace SVGPathTwicker
             }
         }
 
-        private static Point ReadPlot(string plot)
+        private const string CommandLetters = "MmZzLlHhVvCcSsQqTtAa";
+
+        // comma and whitespace are interchangeable separators in the SVG path grammar
+        private static void SkipCommaWsp(string s, ref int pos)
         {
-            string[] point = plot.Split(',');
-            if (point.Length == 2)
+            while (pos < s.Length && (s[pos] is ' ' or '\t' or '\r' or '\n' or ','))
             {
-                bool setx = float.TryParse(point[0], out float readX);
-                bool sety = float.TryParse(point[1], out float readY);
-                if (setx && sety)
-                {
-                    return new Point((int)readX, (int)readY);
-                }
+                pos++;
             }
-            Console.WriteLine($"Plot (',' not found): {plot}");
-            throw new Exception("Point ',' not found");
         }
 
-        private static Point ReadPlot(string[] arrInPath, ref int ipos)
+        private static char? ReadCommand(string s, ref int pos)
         {
-            string plot = arrInPath[++ipos];
-            if(plot.IndexOf(',') > 0)
+            SkipCommaWsp(s, ref pos);
+            if (pos < s.Length && CommandLetters.IndexOf(s[pos]) >= 0)
             {
-                return ReadPlot(plot);
+                return s[pos++];
             }
-            string[] pts = plot.Split('.');
-            if (pts.Length <= 2) { 
-                bool setx = int.TryParse(pts[0], out int readX);
-                plot = arrInPath[++ipos];
-                pts = plot.Split('.');
-                bool sety = int.TryParse(pts[0], out int readY);
-                if(setx && sety)
-                {
-                    return new Point(readX, readY);
-                }
-            }
-
-            Console.WriteLine($"Plot (v2 not found): {plot}");
-            throw new Exception("Point v2 not found");
+            return null;
         }
 
-        private static int ReadValue(string plot)
+        // Reads one SVG path "number" per the spec grammar: optional sign, digits and/or a decimal
+        // point, optional exponent. Numbers may run together with no separator whenever unambiguous,
+        // e.g. "50-30" (sign starts a new number), ".5.5" (a second '.' starts a new number) or "1e-3"
+        // (the exponent belongs to the same number it follows).
+        private static bool TryReadNumber(string s, ref int pos, out double value)
         {
-            bool setv = float.TryParse(plot, out float readv);
-            if (setv)
+            SkipCommaWsp(s, ref pos);
+            int start = pos;
+            int p = pos;
+            if (p < s.Length && (s[p] == '+' || s[p] == '-'))
             {
-                return (int)readv;
+                p++;
             }
-            Console.WriteLine($"Value (not found): {plot}");
-            throw new Exception("Value not found");
-        }
-
-        private static bool ReadArcComponent(string plot)
-        {
-            if(plot == "1")
+            int digits = 0;
+            while (p < s.Length && char.IsAsciiDigit(s[p])) { p++; digits++; }
+            if (p < s.Length && s[p] == '.')
             {
-                return true;
+                p++;
+                while (p < s.Length && char.IsAsciiDigit(s[p])) { p++; digits++; }
             }
-            if (plot == "0")
+            if (digits == 0)
             {
+                value = 0;
                 return false;
             }
-            Console.WriteLine($"Arc detail (not found): {plot}");
-            throw new Exception("Arc detail error");
+            if (p < s.Length && (s[p] == 'e' || s[p] == 'E'))
+            {
+                int q = p + 1;
+                if (q < s.Length && (s[q] == '+' || s[q] == '-')) { q++; }
+                int expDigits = 0;
+                while (q < s.Length && char.IsAsciiDigit(s[q])) { q++; expDigits++; }
+                if (expDigits > 0)
+                {
+                    // valid exponent: it belongs to this number, not a separate token
+                    p = q;
+                }
+            }
+            bool ok = double.TryParse(s.AsSpan(start, p - start), NumberStyles.Float, CultureInfo.InvariantCulture, out value);
+            pos = p;
+            return ok;
+        }
+
+        private static bool TryReadCoordinate(string s, ref int pos, out int value)
+        {
+            if (TryReadNumber(s, ref pos, out double d))
+            {
+                value = (int)d;
+                return true;
+            }
+            value = 0;
+            return false;
+        }
+
+        private static bool TryReadPoint(string s, ref int pos, out Point point)
+        {
+            if (TryReadNumber(s, ref pos, out double x) && TryReadNumber(s, ref pos, out double y))
+            {
+                point = new Point((int)x, (int)y);
+                return true;
+            }
+            point = Point.Empty;
+            return false;
+        }
+
+        // An elliptical-arc flag is always exactly one '0' or '1' character, so it is never ambiguous
+        // even when packed directly against neighbouring numbers (e.g. "0125,25" = flag,flag,25,25).
+        private static bool TryReadFlag(string s, ref int pos, out bool flag)
+        {
+            SkipCommaWsp(s, ref pos);
+            if (pos < s.Length && (s[pos] == '0' || s[pos] == '1'))
+            {
+                flag = s[pos] == '1';
+                pos++;
+                return true;
+            }
+            flag = false;
+            return false;
+        }
+
+        private static void ReportParseFailure(string s, int pos, string context)
+        {
+            string near = s.Substring(pos, Math.Min(20, s.Length - pos));
+            Console.WriteLine($"path parse error ({context}) near position {pos}: \"{near}\"");
         }
     }
 }

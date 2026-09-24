@@ -28,6 +28,14 @@ namespace SVGPathTweak.Tests
         [TestCase("M 10,20 Q 20,10 30,20 T 50,20 z", ExpectedResult = "m 0,0 q 0,-30 10,-20 t 20,0 z")]
         [TestCase("m 10.4,20.6 s 5,-5 10,0 z", ExpectedResult = "m 0,0 s 5,-5 10,0 z")]
         [TestCase("M 10,20 S 20,10 30,20 z", ExpectedResult = "m 0,0 s 0,-30 10,-20 z")]
+        // SVG number grammar: numbers may be packed together with no separator when unambiguous
+        // (a sign, a decimal point, or a single-character flag each disambiguate the boundary)
+        [TestCase("m 0,0 50-30 z", ExpectedResult = "m 0,0 50,-30 z")]
+        [TestCase("m 0,0 .5.5 z", ExpectedResult = "m 0,0 0,0 z")]
+        [TestCase("m 0,0 l 1e1,2e2 z", ExpectedResult = "m 0,0 l 10,200 z")]
+        [TestCase("m 0,0 l 1e-3,1e-3 z", ExpectedResult = "m 0,0 l 0,0 z")]
+        // arc flags are a single '0'/'1' char, so they may be packed against neighbouring numbers too
+        [TestCase("m 0,0 a25,25 0 0125,25 z", ExpectedResult = "m 0,0 a 25,25 0 0 1 25,25 z")]
         public string Test1(string drawingPath)
         {
             SvgPathMapElement svgPathMap = new(0,0,drawingPath);

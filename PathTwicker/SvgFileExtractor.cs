@@ -34,7 +34,9 @@ namespace SVGPathTwicker
 
         // a path element with no children may be self-closed, or written as an explicit open/close pair
         private readonly Regex rexGrabPaths = new(@"<path\s+(?<pathgrab>[^>]+?)\s*(?:/>|>\s*</path\s*>)", RegexOptions.Multiline);
-        private readonly Regex rexDrawing = new(ATTR_START + @"d=" + QUOTE + @"(?<drawingdata>[0-9mMzZlLcChHvVaAqQtTsSeE ,.-]+)" + ENDQUOTE, RegexOptions.CultureInvariant);
+        // '+' is a legal explicit sign in the SVG number grammar (e.g. "+50" or the exponent in "1e+3"),
+        // and whitespace separators may also be tabs/newlines, not just plain spaces
+        private readonly Regex rexDrawing = new(ATTR_START + @"d=" + QUOTE + @"(?<drawingdata>[0-9mMzZlLcChHvVaAqQtTsSeE ,.+\t\r\n-]+)" + ENDQUOTE, RegexOptions.CultureInvariant);
         private readonly Regex rexId = new(ATTR_START + @"id=" + QUOTE + @"(?<idattr>[0-9a-zA-Z_-]+)" + ENDQUOTE, RegexOptions.CultureInvariant);
         private readonly Regex rexCssClass = new(ATTR_START + @"class=" + QUOTE + @"(?<classattr>[0-9a-zA-Z_-]+)" + ENDQUOTE, RegexOptions.CultureInvariant);
         private readonly Regex rexCssStyle = new(ATTR_START + @"style=" + QUOTE + @"(?<styleattr>[^""']+)" + ENDQUOTE, RegexOptions.CultureInvariant);
