@@ -12,7 +12,9 @@ Of that merged transform, the translation and the rotation angle are kept apart 
 All subsequent pen move shall convert to relative move instruction, in respect to SVG path element 'd' attribute definition.
 Wherever possible, preference should be given to 'c', 'h', 'v' or 'a', use 'l' whence it cannot simplify, and every path shall close using 'z' instruction.
 Unit provided in original path is centimeter (100 is one meter). Inkscape creates floating numbers, while in the context anything lower than the unit is meaningless.  Each pen move coordinates shall simplify to integer.
-From origin to close, while the pen is moving, in a boxing rectangle minimum and maximum x and y pen position, relative to path element, will open the way for many useful feature, hence it is stored separately while processing.
+From origin to close, the boxing rectangle holds the whole drawing (the real extent of its curves and arcs, not only the pen position where each move ends), relative to path element, and will open the way for many useful feature, hence it is stored separately while processing.
+That rectangle is the smallest one, of any orientation, around the drawing: when it is tilted, its angle is added to the rotation, and the drawing is turned back so that it sits upright in its box (only if this shrinks the box by more than 1%, and by at least half a degree, so a circle or an upright drawing is left alone). Turning is around the reference point, so its position does not move.
+That reference point, the origin 0,0 of the drawing, is the top-left corner of the box: the box thus starts at 0,0, Delta X and Delta Y are the map position of that corner, and the rotation turns the drawing around it. The first move of the path is then its offset from that corner (m 0,0 only when the drawing starts on the corner itself).
 Optimised path drawing coordinate are relative, and coded so.
 Basic shapes (rect, circle, ellipse, polygon, polyline) are calculated into corresponding path element.  
 A line has no area of its own, so it becomes the rectangle its stroke covers: the pen 'stroke-width' (from style, else attribute, else 1) is its second dimension.  

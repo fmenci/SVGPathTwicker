@@ -14,6 +14,7 @@ You should have received a copy of the GNU General Public License along with Foo
 
  * */
 
+using System.Drawing;
 using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -167,20 +168,46 @@ namespace SVGPathTwicker
                         // rest of the transform (scale, skew, flip) is applied to the drawing itself
                         var (rotation, rest) = transform.SplitRotation();
                         string? transformedPath = null;
-                        if (!rest.LinearIsIdentity)
+                        (int MinX, int MinY, int MaxX, int MaxY)? extent = null;
+                        Point firstPointOffset = Point.Empty;
+                        if (PathTransformer.TryTransform(drawingPath, rest, out string normalizedPath) &&
+                            PathGeometry.TryFlatten(normalizedPath, out var points) && points.Count > 0)
                         {
-                            if (PathTransformer.TryTransform(drawingPath, rest, out string transformedData))
+                            // the smallest rectangle around the whole drawing: when it is tilted, its angle joins
+                            // the rotation and the drawing is turned back, so that it sits axis-aligned in its box
+                            double turn = PathGeometry.BestRotation(points);
+                            Affine linear = rest;
+                            if (turn != 0)
                             {
-                                transformedPath = transformedData;
+                                double c = Math.Cos(turn * Math.PI / 180), s = Math.Sin(turn * Math.PI / 180);
+                                linear = new Affine(c, -s, s, c, 0, 0).Multiply(rest);
+                                points = points.Select(p => (p.X * c + p.Y * s, -p.X * s + p.Y * c)).ToList();
+                                rotation += turn;
+                                rotation -= 360 * Math.Floor((rotation + 180) / 360);
+                                if (rotation == -180) { rotation = 180; }
                             }
-                            else
+                            if (!linear.LinearIsIdentity && PathTransformer.TryTransform(drawingPath, linear, out string turnedData))
                             {
-                                Console.WriteLine("path of <{0}> not understood, its transform ignored", tag);
+                                transformedPath = turnedData;
                             }
+                            // the drawing's origin 0,0 is the top-left corner of its box, so the box starts at 0,0 and
+                            // the first move is the first point's offset from that corner
+                            var (x0, y0) = points[0];
+                            double cornerX = points.Min(p => p.X), cornerY = points.Min(p => p.Y);
+                            firstPointOffset = new Point(SvgPathMapElement.RoundToInt(x0 - cornerX), SvgPathMapElement.RoundToInt(y0 - cornerY));
+                            extent = (0, 0, SvgPathMapElement.RoundToInt(points.Max(p => p.X) - cornerX), SvgPathMapElement.RoundToInt(points.Max(p => p.Y) - cornerY));
+                        }
+                        else if (!rest.LinearIsIdentity)
+                        {
+                            Console.WriteLine("path of <{0}> not understood, its transform ignored", tag);
                         }
                         //Console.WriteLine("move pen to : {0}, {1}", translatex, translatey);
 
-                        SvgPathMapElement svgPathMap = new(SvgPathMapElement.RoundToInt(rest.E), SvgPathMapElement.RoundToInt(rest.F), drawingPath, transformedPath, rotation);
+                        SvgPathMapElement svgPathMap = new(SvgPathMapElement.RoundToInt(rest.E), SvgPathMapElement.RoundToInt(rest.F), drawingPath, transformedPath, rotation, firstPointOffset);
+                        if (extent is { } e)
+                        {
+                            svgPathMap.SetExtent(e.MinX, e.MinY, e.MaxX, e.MaxY);
+                        }
 
                         //  write CSV 
                         strOutput.Append('"');

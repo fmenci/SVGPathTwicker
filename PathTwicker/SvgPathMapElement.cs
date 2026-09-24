@@ -39,19 +39,36 @@ namespace SVGPathTwicker
         // source as written, for the record.
         // rotationDegrees: the element is turned by this angle around the path's first point (its reference point
         // on the map). The drawing itself is kept un-rotated; the angle is reported apart, like the translation.
-        public SvgPathMapElement(int translateX, int translateY, string originalPath, string? processedPath = null, double rotationDegrees = 0)
+        // firstPointOffset: how far the path's first point sits from the drawing's reference corner (the top-left
+        // corner of its bounding box), when that corner, rather than the first point, is the origin 0,0 of the
+        // drawing. It is written as the first move, and it is that corner which is the position on the map and
+        // the pivot of the rotation. Left empty, the first point is the origin.
+        public SvgPathMapElement(int translateX, int translateY, string originalPath, string? processedPath = null, double rotationDegrees = 0, Point firstPointOffset = default)
         {
             PathOrigin.Offset(translateX, translateY);
             OriginalPath = originalPath;
             SourceToProcess = processedPath ?? originalPath;
             Rotation = Math.Abs(rotationDegrees) < 0.005 ? 0 : Math.Round(rotationDegrees, 2);
+            FirstPointOffset = firstPointOffset;
             Init();
         }
+
+        private readonly Point FirstPointOffset;
 
         private readonly string SourceToProcess;
 
         // rotation angle in degrees, 0 by default
         public double Rotation { get; }
+
+        // Replaces the box tracked from the pen positions (which only sees where each segment ends) by the
+        // drawing's real extent, in the same frame: relative to the path's first point.
+        internal void SetExtent(int minX, int minY, int maxX, int maxY)
+        {
+            P1x = minX;
+            P1y = minY;
+            P2x = maxX;
+            P2y = maxY;
+        }
 
         // where a point of the un-rotated drawing lands once the element's rotation is applied
         private Point Rotated(Point p)
@@ -246,9 +263,9 @@ namespace SVGPathTwicker
                             // position is kept apart, and the pen tracking starts from 0,0 in the output frame
                             PathAnchor = buffer_point1;
                             // the reference point sits where the element's rotation carries the first moveto
-                            PathOrigin.Offset(Rotated(buffer_point1));
+                            PathOrigin.Offset(Rotated(new Point(buffer_point1.X - FirstPointOffset.X, buffer_point1.Y - FirstPointOffset.Y)));
                             PathStartPoint = Point.Empty;
-                            buffer_point1 = Point.Empty;
+                            buffer_point1 = FirstPointOffset;
                         }
                         else
                         {

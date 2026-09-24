@@ -109,7 +109,7 @@ namespace SVGPathTweak.Tests
                 Assert.That(rowsByName["ScaleMove"][5], Is.EqualTo("7"), "Delta X = 5 + 2*1");
                 Assert.That(rowsByName["ScaleMove"][6], Is.EqualTo("9"), "Delta Y = 7 + 2*1");
 
-                Assert.That(rowsByName["ArcScale"][14].Trim('"'), Is.EqualTo("m 0,0 a 10,10 0 0 1 20,0 z"), "arc radii scale too");
+                Assert.That(rowsByName["ArcScale"][14].Trim('"'), Is.EqualTo("m 0,10 a 10,10 0 0 1 20,0 z"), "arc radii scale too; the arc bulges above its start, so the corner is 10 higher");
                 Assert.That(rowsByName["ArcFlip"][14].Trim('"'), Is.EqualTo("m 0,0 a 5,5 0 0 0 10,0 z"), "a mirror reverses the sweep");
 
                 Assert.That(rowsByName["Matrix"][14].Trim('"'), Is.EqualTo("m 0,0 h 10 v 10 z"));
@@ -168,6 +168,52 @@ namespace SVGPathTweak.Tests
         }
 
         [Test]
+        public async Task FitsTheSmallestRectangleAndTurnsTheDrawingBackInsideIt()
+        {
+            string svg = """
+                <svg xmlns="http://www.w3.org/2000/svg">
+                  <path id="Tilted" d="m 0,0 l 34.64,20 l -5,8.66 l -34.64,-20 z"/>
+                  <path id="Diamond" d="m 10,0 l 10,10 l -10,10 l -10,-10 z"/>
+                  <g transform="rotate(20)"><path id="Both" d="m 0,0 l 34.64,20 l -5,8.66 l -34.64,-20 z"/></g>
+                  <path id="Straight" d="m 0,0 h 40 v 10 h -40 z"/>
+                </svg>
+                """;
+            await File.WriteAllTextAsync(Path.Combine(_tempDir, "fit.svg"), svg);
+
+            SvgFileExtractor extractor = new(_tempDir);
+            await extractor.Init();
+
+            string csv = await File.ReadAllTextAsync(Path.Combine(_tempDir, "export_svg.csv"));
+            Dictionary<string, string[]> rowsByName = csv.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries)
+                .Skip(1)
+                .Select(l => l.Split(';'))
+                .ToDictionary(cols => cols[2].Trim('"'));
+
+            Assert.Multiple(() =>
+            {
+                // a 40x10 rectangle drawn 30 degrees off: its angle becomes the rotation, and the drawing sits
+                // upright in a 40x10 box
+                Assert.That(rowsByName["Tilted"][7], Is.EqualTo("30"), "Rotation");
+                Assert.That(rowsByName["Tilted"][12], Is.EqualTo("40"), "Width");
+                Assert.That(rowsByName["Tilted"][13], Is.EqualTo("10"), "Height");
+                Assert.That(rowsByName["Tilted"][14].Trim('"'), Is.EqualTo("m 0,0 h 40 v 10 h -40 z"));
+                Assert.That(rowsByName["Tilted"][4].Trim('"'), Is.EqualTo("m 0,0 l 34.64,20 l -5,8.66 l -34.64,-20 z"), "OriginalPath untouched");
+
+                // a square standing on its corner: turned 45 degrees, upright side is 10*sqrt(2)
+                Assert.That(rowsByName["Diamond"][7], Is.EqualTo("45"));
+                Assert.That(rowsByName["Diamond"][12], Is.EqualTo("14"));
+                Assert.That(rowsByName["Diamond"][13], Is.EqualTo("14"));
+                Assert.That(rowsByName["Diamond"][5], Is.EqualTo("10"), "the reference point does not move");
+                Assert.That(rowsByName["Diamond"][6], Is.EqualTo("0"));
+
+                // the angle adds to the one the transforms already give
+                Assert.That(rowsByName["Both"][7], Is.EqualTo("50"), "20 from the group + 30 from the drawing");
+
+                Assert.That(rowsByName["Straight"][7], Is.EqualTo("0"), "an upright drawing is left alone");
+            });
+        }
+
+        [Test]
         public async Task ConvertsBasicShapesToEquivalentPaths()
         {
             // rect (plain and rounded), circle, ellipse, polyline and polygon all get synthesized into
@@ -213,17 +259,25 @@ namespace SVGPathTweak.Tests
                     Is.EqualTo("m 5,0 h 30 a 5,5 0 0 1 5,5 v 10 a 5,5 0 0 1 -5,5 h -30 a 5,5 0 0 1 -5,-5 v -10 a 5,5 0 0 1 5,-5 z"),
                     "rx with no ry: ry defaults to rx");
                 Assert.That(rowsByName["RoundRect1"][14].Trim('"'),
-                    Is.EqualTo("m 0,0 h 30 a 5,5 0 0 1 5,5 v 10 a 5,5 0 0 1 -5,5 h -30 a 5,5 0 0 1 -5,-5 v -10 a 5,5 0 0 1 5,-5 z"));
+                    Is.EqualTo("m 5,0 h 30 a 5,5 0 0 1 5,5 v 10 a 5,5 0 0 1 -5,5 h -30 a 5,5 0 0 1 -5,-5 v -10 a 5,5 0 0 1 5,-5 z"));
 
                 Assert.That(rowsByName, Contains.Key("Circle1"));
                 Assert.That(rowsByName["Circle1"][4].Trim('"'), Is.EqualTo("m 60,50 a 10,10 0 1 0 -20,0 a 10,10 0 1 0 20,0 z"));
-                Assert.That(rowsByName["Circle1"][14].Trim('"'), Is.EqualTo("m 0,0 a 10,10 0 1 0 -20,0 a 10,10 0 1 0 20,0 z"));
-                Assert.That(rowsByName["Circle1"][5], Is.EqualTo("60"), "Delta X = cx + r");
-                Assert.That(rowsByName["Circle1"][6], Is.EqualTo("50"), "Delta Y = cy");
+                Assert.That(rowsByName["Circle1"][14].Trim('"'), Is.EqualTo("m 20,10 a 10,10 0 1 0 -20,0 a 10,10 0 1 0 20,0 z"));
+                Assert.That(rowsByName["Circle1"][5], Is.EqualTo("40"), "Delta X = cx - r, the left of the box");
+                Assert.That(rowsByName["Circle1"][6], Is.EqualTo("40"), "Delta Y = cy - r, the top of the box");
+                // the box follows the arcs' real extent, not just where each one ends
+                Assert.That(rowsByName["Circle1"][10], Is.EqualTo("0"), "Box X: the box starts at the origin");
+                Assert.That(rowsByName["Circle1"][11], Is.EqualTo("0"), "Box Y");
+                Assert.That(rowsByName["Circle1"][12], Is.EqualTo("20"), "Width");
+                Assert.That(rowsByName["Circle1"][13], Is.EqualTo("20"), "Height");
+                Assert.That(rowsByName["Circle1"][7], Is.EqualTo("0"), "a circle has no orientation to find");
+                Assert.That(rowsByName["Ellipse1"][12], Is.EqualTo("40"), "Width");
+                Assert.That(rowsByName["Ellipse1"][13], Is.EqualTo("20"), "Height");
 
                 Assert.That(rowsByName, Contains.Key("Ellipse1"));
                 Assert.That(rowsByName["Ellipse1"][4].Trim('"'), Is.EqualTo("m 20,0 a 20,10 0 1 0 -40,0 a 20,10 0 1 0 40,0 z"));
-                Assert.That(rowsByName["Ellipse1"][14].Trim('"'), Is.EqualTo("m 0,0 a 20,10 0 1 0 -40,0 a 20,10 0 1 0 40,0 z"));
+                Assert.That(rowsByName["Ellipse1"][14].Trim('"'), Is.EqualTo("m 40,10 a 20,10 0 1 0 -40,0 a 20,10 0 1 0 40,0 z"));
 
                 Assert.That(rowsByName, Contains.Key("Polyline1"));
                 Assert.That(rowsByName["Polyline1"][4].Trim('"'), Is.EqualTo("m 0,0 l 10,0 l 0,10"), "polyline has no closing z of its own");
