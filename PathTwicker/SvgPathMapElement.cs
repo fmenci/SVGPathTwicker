@@ -270,7 +270,7 @@ namespace SVGPathTwicker
                             !TryReadFlag(path, ref pos, out buffer_sweep) ||
                             !TryReadPoint(path, ref pos, out buffer_point_P2))
                         { ReportParseFailure(path, pos, "elliptical arc"); aborted = true; break; }
-                        buffer_integer = (int)rotation;
+                        buffer_integer = RoundToInt(rotation);
                         if (InAbsoluteCoord)
                         {
                             buffer_point_P2 = ToRelativeCoord(buffer_point_P2);
@@ -395,7 +395,7 @@ namespace SVGPathTwicker
                                     !TryReadFlag(path, ref pos, out buffer_sweep) ||
                                     !TryReadPoint(path, ref pos, out buffer_point_P2))
                                 { ReportParseFailure(path, pos, "elliptical arc (implicit)"); aborted = true; break; }
-                                buffer_integer = (int)rotationImplicit;
+                                buffer_integer = RoundToInt(rotationImplicit);
                                 if (InAbsoluteCoord)
                                 {
                                     buffer_point_P2 = ToRelativeCoord(buffer_point_P2);
@@ -525,7 +525,7 @@ namespace SVGPathTwicker
         {
             if (TryReadNumber(s, ref pos, out double d))
             {
-                value = (int)d;
+                value = RoundToInt(d);
                 return true;
             }
             value = 0;
@@ -536,11 +536,18 @@ namespace SVGPathTwicker
         {
             if (TryReadNumber(s, ref pos, out double x) && TryReadNumber(s, ref pos, out double y))
             {
-                point = new Point((int)x, (int)y);
+                point = new Point(RoundToInt(x), RoundToInt(y));
                 return true;
             }
             point = Point.Empty;
             return false;
+        }
+
+        // every coordinate in this tool simplifies to an integer (see README); round to the nearest
+        // one instead of truncating, so e.g. 0.9 becomes 1 rather than disappearing to 0
+        internal static int RoundToInt(double value)
+        {
+            return (int)Math.Round(value, MidpointRounding.AwayFromZero);
         }
 
         // An elliptical-arc flag is always exactly one '0' or '1' character, so it is never ambiguous

@@ -191,19 +191,19 @@ namespace SVGPathTwicker
             Console.WriteLine("SVG Path extract ready");
         }
 
-        // translate() y is optional (translate(x) implies y=0), and values may carry decimals: truncate to
-        // int like every other coordinate in this tool.
+        // translate() y is optional (translate(x) implies y=0), and values may carry decimals: round to
+        // the nearest int, like every other coordinate in this tool.
         private static void ParseTranslate(Group xGroup, Group yGroup, out int translatex, out int translatey)
         {
             translatex = 0;
             translatey = 0;
             if (xGroup.Success && double.TryParse(xGroup.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out double foundx))
             {
-                translatex = (int)foundx;
+                translatex = SvgPathMapElement.RoundToInt(foundx);
             }
             if (yGroup.Success && double.TryParse(yGroup.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out double foundy))
             {
-                translatey = (int)foundy;
+                translatey = SvgPathMapElement.RoundToInt(foundy);
             }
         }
     }
