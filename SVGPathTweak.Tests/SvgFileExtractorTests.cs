@@ -66,5 +66,181 @@ namespace SVGPathTweak.Tests
                 Assert.That(rowsByName["D"][6], Is.EqualTo("8"), "CSS transform translate y");
             });
         }
+
+        [Test]
+        public async Task AppliesTheWholeTransformToTheGeometry()
+        {
+            // the translation is the position on the map (Delta X/Y); scale, rotation and flips are applied to
+            // the drawing itself. OriginalPath always stays the source, untouched.
+            string svg = """
+                <svg xmlns="http://www.w3.org/2000/svg">
+                  <path id="Rot" d="m 10,0 l 20,0 l 0,10 z" transform="rotate(90)"/>
+                  <path id="CssRot" d="m 10,0 l 20,0 l 0,10 z" style="transform:rotate(90deg)"/>
+                  <path id="ScaleMove" d="m 1,1 h 3 v 4 z" transform="translate(5,7) scale(2)"/>
+                  <path id="ArcScale" d="m 0,0 a 5,5 0 0 1 10,0 z" transform="scale(2)"/>
+                  <path id="ArcFlip" d="m 0,0 a 5,5 0 0 1 10,0 z" transform="scale(1,-1)"/>
+                  <path id="Matrix" d="m 0,0 h 10 v 10 z" transform="matrix(1,0,0,1,3,4)"/>
+                </svg>
+                """;
+            await File.WriteAllTextAsync(Path.Combine(_tempDir, "transforms.svg"), svg);
+
+            SvgFileExtractor extractor = new(_tempDir);
+            await extractor.Init();
+
+            string csv = await File.ReadAllTextAsync(Path.Combine(_tempDir, "export_svg.csv"));
+            Dictionary<string, string[]> rowsByName = csv.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries)
+                .Skip(1)
+                .Select(l => l.Split(';'))
+                .ToDictionary(cols => cols[2].Trim('"'));
+
+            Assert.Multiple(() =>
+            {
+                // rotate(90): (x,y) -> (-y,x), so the start (10,0) lands on (0,10)
+                Assert.That(rowsByName["Rot"][4].Trim('"'), Is.EqualTo("m 10,0 l 20,0 l 0,10 z"), "OriginalPath untouched");
+                Assert.That(rowsByName["Rot"][14].Trim('"'), Is.EqualTo("m 0,0 h 20 v 10 z"), "the drawing keeps its own orientation");
+                Assert.That(rowsByName["Rot"][7], Is.EqualTo("90"), "Rotation is reported apart");
+                Assert.That(rowsByName["Rot"][5], Is.EqualTo("0"), "Delta X");
+                Assert.That(rowsByName["Rot"][6], Is.EqualTo("10"), "Delta Y");
+                Assert.That(rowsByName["CssRot"][14].Trim('"'), Is.EqualTo("m 0,0 h 20 v 10 z"), "SVG2 CSS transform, angle unit");
+                Assert.That(rowsByName["CssRot"][7], Is.EqualTo("90"));
+                Assert.That(rowsByName["ScaleMove"][7], Is.EqualTo("0"), "Rotation defaults to 0");
+
+                Assert.That(rowsByName["ScaleMove"][14].Trim('"'), Is.EqualTo("m 0,0 h 6 v 8 z"));
+                Assert.That(rowsByName["ScaleMove"][5], Is.EqualTo("7"), "Delta X = 5 + 2*1");
+                Assert.That(rowsByName["ScaleMove"][6], Is.EqualTo("9"), "Delta Y = 7 + 2*1");
+
+                Assert.That(rowsByName["ArcScale"][14].Trim('"'), Is.EqualTo("m 0,0 a 10,10 0 0 1 20,0 z"), "arc radii scale too");
+                Assert.That(rowsByName["ArcFlip"][14].Trim('"'), Is.EqualTo("m 0,0 a 5,5 0 0 0 10,0 z"), "a mirror reverses the sweep");
+
+                Assert.That(rowsByName["Matrix"][14].Trim('"'), Is.EqualTo("m 0,0 h 10 v 10 z"));
+                Assert.That(rowsByName["Matrix"][5], Is.EqualTo("3"));
+                Assert.That(rowsByName["Matrix"][6], Is.EqualTo("4"));
+            });
+        }
+
+        [Test]
+        public async Task MergesTheTransformsOfParentGroupsWithTheElementsOwn()
+        {
+            string svg = """
+                <svg xmlns="http://www.w3.org/2000/svg">
+                  <!-- <g transform="translate(5000,5000)"> a comment holds nothing -->
+                  <g transform="translate(100,50)">
+                    <g transform="rotate(90)">
+                      <path id="InGroup" d="m 10,0 h 20 v 10 z" transform="translate(1,2)"/>
+                    </g>
+                    <path id="Sibling" d="m 0,0 h 5 v 5 z"/>
+                    <g id="empty" transform="translate(999,999)"/>
+                    <path id="AfterEmpty" d="m 0,0 h 5 v 5 z"/>
+                  </g>
+                  <path id="Outside" d="m 0,0 h 5 v 5 z"/>
+                </svg>
+                """;
+            await File.WriteAllTextAsync(Path.Combine(_tempDir, "groups.svg"), svg);
+
+            SvgFileExtractor extractor = new(_tempDir);
+            await extractor.Init();
+
+            string csv = await File.ReadAllTextAsync(Path.Combine(_tempDir, "export_svg.csv"));
+            Dictionary<string, string[]> rowsByName = csv.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries)
+                .Skip(1)
+                .Select(l => l.Split(';'))
+                .ToDictionary(cols => cols[2].Trim('"'));
+
+            Assert.Multiple(() =>
+            {
+                // translate(100,50) . rotate(90) . translate(1,2): the path's own transform is applied first,
+                // so its origin is carried to (-2,1) by the rotation and then to (98,51); its first point (10,0)
+                // is turned onto (0,10) => reference point (98,61), rotated by 90 degrees
+                Assert.That(rowsByName["InGroup"][5], Is.EqualTo("98"), "Delta X");
+                Assert.That(rowsByName["InGroup"][6], Is.EqualTo("61"), "Delta Y");
+                Assert.That(rowsByName["InGroup"][7], Is.EqualTo("90"), "Rotation");
+                Assert.That(rowsByName["InGroup"][14].Trim('"'), Is.EqualTo("m 0,0 h 20 v 10 z"));
+                Assert.That(rowsByName["InGroup"][4].Trim('"'), Is.EqualTo("m 10,0 h 20 v 10 z"), "OriginalPath untouched");
+
+                Assert.That(rowsByName["Sibling"][5], Is.EqualTo("100"), "only the outer group applies to a sibling");
+                Assert.That(rowsByName["Sibling"][6], Is.EqualTo("50"));
+                Assert.That(rowsByName["Sibling"][7], Is.EqualTo("0"));
+
+                Assert.That(rowsByName["AfterEmpty"][5], Is.EqualTo("100"), "an empty self-closed group does not leak");
+                Assert.That(rowsByName["Outside"][5], Is.EqualTo("0"), "closed groups no longer apply");
+                Assert.That(rowsByName["Outside"][6], Is.EqualTo("0"));
+            });
+        }
+
+        [Test]
+        public async Task ConvertsBasicShapesToEquivalentPaths()
+        {
+            // rect (plain and rounded), circle, ellipse, polyline and polygon all get synthesized into
+            // an equivalent path 'd' before going through the same pipeline as a real <path>
+            string svg = """
+                <svg xmlns="http://www.w3.org/2000/svg">
+                  <rect id="Rect1" x="10" y="20" width="30" height="40"/>
+                  <rect id="RoundRect1" x="0" y="0" width="40" height="20" rx="5"/>
+                  <circle id="Circle1" cx="50" cy="50" r="10"/>
+                  <ellipse id="Ellipse1" cx="0" cy="0" rx="20" ry="10"/>
+                  <polyline id="Polyline1" points="0,0 10,0 10,10"/>
+                  <polygon id="Polygon1" points="0,0 10,0 10,10 0,10"/>
+                  <line id="Line1" x1="0" y1="10" x2="100" y2="10" stroke-width="4"/>
+                  <line id="Line2" x1="5" y1="0" x2="5" y2="20" style="stroke:#000;stroke-width:6"/>
+                  <line id="Line3" x1="0" y1="0" x2="10" y2="0"/>
+                  <line id="Line4" x1="1" y1="1" x2="1" y2="1" stroke-width="4"/>
+                </svg>
+                """;
+            await File.WriteAllTextAsync(Path.Combine(_tempDir, "shapes.svg"), svg);
+
+            SvgFileExtractor extractor = new(_tempDir);
+            await extractor.Init();
+
+            string csv = await File.ReadAllTextAsync(Path.Combine(_tempDir, "export_svg.csv"));
+            string[] lines = csv.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries);
+            Dictionary<string, string[]> rowsByName = lines.Skip(1)
+                .Select(l => l.Split(';'))
+                .ToDictionary(cols => cols[2].Trim('"'));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(rowsByName, Contains.Key("Rect1"));
+                Assert.That(rowsByName["Rect1"][4].Trim('"'), Is.EqualTo("m 10,20 h 30 v 40 h -30 z"));
+                Assert.That(rowsByName["Rect1"][14].Trim('"'), Is.EqualTo("m 0,0 h 30 v 40 h -30 z"), "output is relative");
+                // a plain axis-aligned rect: box/size are exact, no curve is involved
+                Assert.That(rowsByName["Rect1"][5], Is.EqualTo("10"), "Delta X = rect x");
+                Assert.That(rowsByName["Rect1"][6], Is.EqualTo("20"), "Delta Y = rect y");
+                Assert.That(rowsByName["Rect1"][12], Is.EqualTo("30"), "Width");
+                Assert.That(rowsByName["Rect1"][13], Is.EqualTo("40"), "Height");
+
+                Assert.That(rowsByName, Contains.Key("RoundRect1"));
+                Assert.That(rowsByName["RoundRect1"][4].Trim('"'),
+                    Is.EqualTo("m 5,0 h 30 a 5,5 0 0 1 5,5 v 10 a 5,5 0 0 1 -5,5 h -30 a 5,5 0 0 1 -5,-5 v -10 a 5,5 0 0 1 5,-5 z"),
+                    "rx with no ry: ry defaults to rx");
+                Assert.That(rowsByName["RoundRect1"][14].Trim('"'),
+                    Is.EqualTo("m 0,0 h 30 a 5,5 0 0 1 5,5 v 10 a 5,5 0 0 1 -5,5 h -30 a 5,5 0 0 1 -5,-5 v -10 a 5,5 0 0 1 5,-5 z"));
+
+                Assert.That(rowsByName, Contains.Key("Circle1"));
+                Assert.That(rowsByName["Circle1"][4].Trim('"'), Is.EqualTo("m 60,50 a 10,10 0 1 0 -20,0 a 10,10 0 1 0 20,0 z"));
+                Assert.That(rowsByName["Circle1"][14].Trim('"'), Is.EqualTo("m 0,0 a 10,10 0 1 0 -20,0 a 10,10 0 1 0 20,0 z"));
+                Assert.That(rowsByName["Circle1"][5], Is.EqualTo("60"), "Delta X = cx + r");
+                Assert.That(rowsByName["Circle1"][6], Is.EqualTo("50"), "Delta Y = cy");
+
+                Assert.That(rowsByName, Contains.Key("Ellipse1"));
+                Assert.That(rowsByName["Ellipse1"][4].Trim('"'), Is.EqualTo("m 20,0 a 20,10 0 1 0 -40,0 a 20,10 0 1 0 40,0 z"));
+                Assert.That(rowsByName["Ellipse1"][14].Trim('"'), Is.EqualTo("m 0,0 a 20,10 0 1 0 -40,0 a 20,10 0 1 0 40,0 z"));
+
+                Assert.That(rowsByName, Contains.Key("Polyline1"));
+                Assert.That(rowsByName["Polyline1"][4].Trim('"'), Is.EqualTo("m 0,0 l 10,0 l 0,10"), "polyline has no closing z of its own");
+                Assert.That(rowsByName["Polyline1"][14].Trim('"'), Is.EqualTo("m 0,0 h 10 v 10 z"), "axis-aligned segments are h/v, and it is closed by the tool's every-path-closes rule");
+
+                Assert.That(rowsByName, Contains.Key("Polygon1"));
+                Assert.That(rowsByName["Polygon1"][4].Trim('"'), Is.EqualTo("m 0,0 l 10,0 l 0,10 l -10,0 z"));
+                Assert.That(rowsByName["Polygon1"][14].Trim('"'), Is.EqualTo("m 0,0 h 10 v 10 h -10 z"));
+
+                // a line becomes the rectangle its stroke covers: stroke-width is the second dimension
+                Assert.That(rowsByName["Line1"][4].Trim('"'), Is.EqualTo("m 0,12 l 100,0 l 0,-4 l -100,0 z"), "stroke-width attribute");
+                Assert.That(rowsByName["Line1"][12], Is.EqualTo("100"), "Width");
+                Assert.That(rowsByName["Line1"][13], Is.EqualTo("4"), "Height = stroke-width");
+                Assert.That(rowsByName["Line2"][4].Trim('"'), Is.EqualTo("m 2,0 l 0,20 l 6,0 l 0,-20 z"), "stroke-width from style wins");
+                Assert.That(rowsByName["Line3"][4].Trim('"'), Is.EqualTo("m 0,0.5 l 10,0 l 0,-1 l -10,0 z"), "default stroke-width is 1");
+                Assert.That(rowsByName, Does.Not.ContainKey("Line4"), "a zero-length line paints nothing");
+            });
+        }
     }
 }

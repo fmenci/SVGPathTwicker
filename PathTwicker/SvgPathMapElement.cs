@@ -34,11 +34,35 @@ namespace SVGPathTwicker
 
     public class SvgPathMapElement
     {
-        public SvgPathMapElement(int translateX, int translateY, string originalPath)
+        // processedPath: when the element's transform is more than a translation, the source path with that
+        // transform already applied to its geometry (see PathTransformer). OriginalPath always remains the
+        // source as written, for the record.
+        // rotationDegrees: the element is turned by this angle around the path's first point (its reference point
+        // on the map). The drawing itself is kept un-rotated; the angle is reported apart, like the translation.
+        public SvgPathMapElement(int translateX, int translateY, string originalPath, string? processedPath = null, double rotationDegrees = 0)
         {
             PathOrigin.Offset(translateX, translateY);
             OriginalPath = originalPath;
+            SourceToProcess = processedPath ?? originalPath;
+            Rotation = Math.Abs(rotationDegrees) < 0.005 ? 0 : Math.Round(rotationDegrees, 2);
             Init();
+        }
+
+        private readonly string SourceToProcess;
+
+        // rotation angle in degrees, 0 by default
+        public double Rotation { get; }
+
+        // where a point of the un-rotated drawing lands once the element's rotation is applied
+        private Point Rotated(Point p)
+        {
+            if (Rotation == 0)
+            {
+                return p;
+            }
+            double radians = Rotation * Math.PI / 180;
+            double cos = Math.Cos(radians), sin = Math.Sin(radians);
+            return new Point(RoundToInt(p.X * cos - p.Y * sin), RoundToInt(p.X * sin + p.Y * cos));
         }
 
         public static string CSVHeader {
@@ -46,7 +70,7 @@ namespace SVGPathTwicker
             {
                 StringBuilder header = new ();
                 header.Append(nameof(OriginalPath));
-                header.Append(";Delta X;Delta Y;Label X;Label Y;Box X;Box Y;WIdth;Height;");
+                header.Append(";Delta X;Delta Y;Rotation;Label X;Label Y;Box X;Box Y;WIdth;Height;");
                 header.Append(nameof(ImprovedPath));
                 header.Append(";CSS class; CSS style;");
                 header.Append(Environment.NewLine);
@@ -63,6 +87,8 @@ namespace SVGPathTwicker
             source.Append(PathOrigin.X);
             source.Append(';');
             source.Append(PathOrigin.Y);
+            source.Append(';');
+            source.Append(Rotation.ToString("0.##", CultureInfo.InvariantCulture));
             source.Append(';');
             int lx = (P2x - P1x) / 2 + P1x;
             source.Append(lx);
@@ -86,12 +112,8 @@ namespace SVGPathTwicker
             source.Append(';');
         }
 
-        public string OriginalPath { get; private set; } = string.Empty;
-
-        public void SetPath(string path)
-        {
-            OriginalPath = path;
-        }
+        // record of the source path: set once by the constructor, never modified by the processing
+        public string OriginalPath { get; }
 
         public string ReadImprovedPath()
         {
@@ -122,6 +144,56 @@ namespace SVGPathTwicker
 
         private readonly StringBuilder ImprovedPath = new ();
 
+        // the last drawing command written to ImprovedPath: lets the output repeat a command implicitly
+        // (e.g. "h 5 6") and tells whether a bare coordinate pair would still read as a lineto
+        private char LastOut = '\0';
+
+        // a straight segment: written as 'h' or 'v' whenever it is axis-aligned, and as 'l' only when it
+        // cannot be simplified. A zero-length one draws nothing and is dropped.
+        private void AppendLine(Point p, bool explicitCommand)
+        {
+            if (p.Y == 0)
+            {
+                AppendHorizontal(p.X);
+            }
+            else if (p.X == 0)
+            {
+                AppendVertical(p.Y);
+            }
+            else if (explicitCommand || (LastOut != 'l' && LastOut != 'm'))
+            {
+                ImprovedPath.AppendFormat(" l {0},{1}", p.X, p.Y);
+                LastOut = 'l';
+            }
+            else
+            {
+                // following an 'l' or 'm': the pair is an implicit lineto
+                ImprovedPath.AppendFormat(" {0},{1}", p.X, p.Y);
+            }
+        }
+
+        private void AppendHorizontal(int dx)
+        {
+            if (dx == 0)
+            {
+                return;
+            }
+            ImprovedPath.Append(LastOut == 'h' ? " " : " h ");
+            ImprovedPath.Append(dx);
+            LastOut = 'h';
+        }
+
+        private void AppendVertical(int dy)
+        {
+            if (dy == 0)
+            {
+                return;
+            }
+            ImprovedPath.Append(LastOut == 'v' ? " " : " v ");
+            ImprovedPath.Append(dy);
+            LastOut = 'v';
+        }
+
         private void MovePen(Point p)
         {
             PenOnPaper.Offset(p.X, p.Y);
@@ -131,19 +203,25 @@ namespace SVGPathTwicker
             P2y = Math.Max(P2y, PenOnPaper.Y);
         }
 
+        // an absolute source point, as a move from the pen: first re-based on the path's first moveto
+        // (the output's 0,0), then relative to where the pen currently is in that same frame
         private Point ToRelativeCoord(Point p)
         {
-            p.Offset(-PathOrigin.X, -PathOrigin.Y);
+            p.Offset(-PathAnchor.X, -PathAnchor.Y);
             p.Offset(-PenOnPaper.X, -PenOnPaper.Y);
             return p;
         }
 
+        // where the path really sits on the map: the transform translation plus its first moveto
         private Point PathOrigin = Point.Empty;
+
+        // the first moveto, as written in the source (before any transform)
+        private Point PathAnchor = Point.Empty;
 
         private void Init()
         {
             bool InAbsoluteCoord = false;
-            string path = OriginalPath;
+            string path = SourceToProcess;
             int pos = 0;
             int len = path.Length;
             int buffer_integer;
@@ -162,19 +240,23 @@ namespace SVGPathTwicker
                         PenMove = PenMovementType.Line;
                         PathNumber++;
                         if (!TryReadPoint(path, ref pos, out buffer_point1)) { ReportParseFailure(path, pos, "moveto"); aborted = true; break; }
-                        if (InAbsoluteCoord)
-                        {
-                            buffer_point1 = ToRelativeCoord(buffer_point1);
-                        }
-                        MovePen(buffer_point1);
                         if (PathNumber == 1)
                         {
-                            PathStartPoint = PathOrigin;
-                            PathOrigin.Offset(buffer_point1);
+                            // the first moveto is always the path's own 0,0 (even when written 'm'): its real
+                            // position is kept apart, and the pen tracking starts from 0,0 in the output frame
+                            PathAnchor = buffer_point1;
+                            // the reference point sits where the element's rotation carries the first moveto
+                            PathOrigin.Offset(Rotated(buffer_point1));
+                            PathStartPoint = Point.Empty;
                             buffer_point1 = Point.Empty;
                         }
                         else
                         {
+                            if (InAbsoluteCoord)
+                            {
+                                buffer_point1 = ToRelativeCoord(buffer_point1);
+                            }
+                            MovePen(buffer_point1);
                             PathStartPoint = PenOnPaper;
                             if (!SubpathClosed)
                             {
@@ -184,6 +266,7 @@ namespace SVGPathTwicker
                             ImprovedPath.Append(' ');
                         }
                         ImprovedPath.AppendFormat("m {0},{1}", buffer_point1.X, buffer_point1.Y);
+                        LastOut = 'm';
                         SubpathClosed = false;
                         break;
                     case 'z':
@@ -191,6 +274,7 @@ namespace SVGPathTwicker
                         PenMove = PenMovementType.None;
                         PenOnPaper = PathStartPoint;
                         ImprovedPath.Append(" z");
+                        LastOut = 'z';
                         SubpathClosed = true;
                         break;
                     case 'l':
@@ -203,7 +287,7 @@ namespace SVGPathTwicker
                             buffer_point1 = ToRelativeCoord(buffer_point1);
                         }
                         MovePen(buffer_point1);
-                        ImprovedPath.AppendFormat(" l {0},{1}", buffer_point1.X, buffer_point1.Y);
+                        AppendLine(buffer_point1, true);
                         break;
                     case 'c':
                     case 'C':
@@ -225,6 +309,7 @@ namespace SVGPathTwicker
                         ImprovedPath.AppendFormat(" {0},{1}", buffer_point1.X, buffer_point1.Y);
                         ImprovedPath.AppendFormat(" {0},{1}", buffer_point_P2.X, buffer_point_P2.Y);
                         ImprovedPath.AppendFormat(" {0},{1}", buffer_point_P3.X, buffer_point_P3.Y);
+                        LastOut = 'c';
                         break;
                     case 'h':
                     case 'H':
@@ -233,15 +318,11 @@ namespace SVGPathTwicker
                         if (!TryReadCoordinate(path, ref pos, out buffer_integer)) { ReportParseFailure(path, pos, "horizontal lineto"); aborted = true; break; }
                         if (InAbsoluteCoord)
                         {
-                            buffer_integer -= PathOrigin.X;
+                            buffer_integer -= PathAnchor.X;
                             buffer_integer -= PenOnPaper.X;
                         }
                         MovePen(new(buffer_integer, 0));
-                        if(Math.Abs(buffer_integer) > 0)
-                        {
-                            ImprovedPath.Append(" h ");
-                            ImprovedPath.Append(buffer_integer);
-                        }
+                        AppendHorizontal(buffer_integer);
                         break;
                     case 'v':
                     case 'V':
@@ -250,15 +331,11 @@ namespace SVGPathTwicker
                         if (!TryReadCoordinate(path, ref pos, out buffer_integer)) { ReportParseFailure(path, pos, "vertical lineto"); aborted = true; break; }
                         if (InAbsoluteCoord)
                         {
-                            buffer_integer -= PathOrigin.Y;
+                            buffer_integer -= PathAnchor.Y;
                             buffer_integer -= PenOnPaper.Y;
                         }
                         MovePen(new(0, buffer_integer));
-                        if(Math.Abs(buffer_integer) > 0)
-                        {
-                            ImprovedPath.Append(" v ");
-                            ImprovedPath.Append(buffer_integer);
-                        }
+                        AppendVertical(buffer_integer);
                         break;
                     case 'a':
                     case 'A':
@@ -282,6 +359,7 @@ namespace SVGPathTwicker
                         ImprovedPath.AppendFormat(" {0}", buffer_arc_lg ? 1 : 0);
                         ImprovedPath.AppendFormat(" {0}", buffer_sweep ? 1 : 0);
                         ImprovedPath.AppendFormat(" {0},{1}", buffer_point_P2.X, buffer_point_P2.Y);
+                        LastOut = 'a';
                         break;
                     case 'q':
                     case 'Q':
@@ -299,6 +377,7 @@ namespace SVGPathTwicker
                         ImprovedPath.Append(" q");
                         ImprovedPath.AppendFormat(" {0},{1}", buffer_point1.X, buffer_point1.Y);
                         ImprovedPath.AppendFormat(" {0},{1}", buffer_point_P2.X, buffer_point_P2.Y);
+                        LastOut = 'q';
                         break;
                     case 't':
                     case 'T':
@@ -311,6 +390,7 @@ namespace SVGPathTwicker
                         }
                         MovePen(buffer_point1);
                         ImprovedPath.AppendFormat(" t {0},{1}", buffer_point1.X, buffer_point1.Y);
+                        LastOut = 't';
                         break;
                     case 's':
                     case 'S':
@@ -328,6 +408,7 @@ namespace SVGPathTwicker
                         ImprovedPath.Append(" s");
                         ImprovedPath.AppendFormat(" {0},{1}", buffer_point1.X, buffer_point1.Y);
                         ImprovedPath.AppendFormat(" {0},{1}", buffer_point_P2.X, buffer_point_P2.Y);
+                        LastOut = 's';
                         break;
                     default:
                         // no explicit command letter here: an implicit repeat of the previous command's
@@ -341,7 +422,7 @@ namespace SVGPathTwicker
                                     buffer_point1 = ToRelativeCoord(buffer_point1);
                                 }
                                 MovePen(buffer_point1);
-                                ImprovedPath.AppendFormat(" {0},{1}", buffer_point1.X, buffer_point1.Y);
+                                AppendLine(buffer_point1, false);
                                 break;
                             case PenMovementType.CubicBezier:
                                 if (!TryReadPoint(path, ref pos, out buffer_point1) ||
@@ -364,29 +445,21 @@ namespace SVGPathTwicker
                                 if (!TryReadCoordinate(path, ref pos, out buffer_integer)) { ReportParseFailure(path, pos, "horizontal lineto (implicit)"); aborted = true; break; }
                                 if (InAbsoluteCoord)
                                 {
-                                    buffer_integer -= PathOrigin.X;
+                                    buffer_integer -= PathAnchor.X;
                                     buffer_integer -= PenOnPaper.X;
                                 }
                                 MovePen(new(buffer_integer, 0));
-                                if(Math.Abs(buffer_integer) > 0)
-                                {
-                                    ImprovedPath.Append(' ');
-                                    ImprovedPath.Append(buffer_integer);
-                                }
+                                AppendHorizontal(buffer_integer);
                                 break;
                             case PenMovementType.Vertical:
                                 if (!TryReadCoordinate(path, ref pos, out buffer_integer)) { ReportParseFailure(path, pos, "vertical lineto (implicit)"); aborted = true; break; }
                                 if (InAbsoluteCoord)
                                 {
-                                    buffer_integer -= PathOrigin.Y;
+                                    buffer_integer -= PathAnchor.Y;
                                     buffer_integer -= PenOnPaper.Y;
                                 }
                                 MovePen(new(0, buffer_integer));
-                                if(Math.Abs(buffer_integer) > 0)
-                                {
-                                    ImprovedPath.Append(' ');
-                                    ImprovedPath.Append(buffer_integer);
-                                }
+                                AppendVertical(buffer_integer);
                                 break;
                             case PenMovementType.Arc:
                                 if (!TryReadPoint(path, ref pos, out buffer_point1) ||
@@ -461,7 +534,7 @@ namespace SVGPathTwicker
         private const string CommandLetters = "MmZzLlHhVvCcSsQqTtAa";
 
         // comma and whitespace are interchangeable separators in the SVG path grammar
-        private static void SkipCommaWsp(string s, ref int pos)
+        internal static void SkipCommaWsp(string s, ref int pos)
         {
             while (pos < s.Length && (s[pos] is ' ' or '\t' or '\r' or '\n' or ','))
             {
@@ -469,7 +542,7 @@ namespace SVGPathTwicker
             }
         }
 
-        private static char? ReadCommand(string s, ref int pos)
+        internal static char? ReadCommand(string s, ref int pos)
         {
             SkipCommaWsp(s, ref pos);
             if (pos < s.Length && CommandLetters.IndexOf(s[pos]) >= 0)
@@ -483,7 +556,9 @@ namespace SVGPathTwicker
         // point, optional exponent. Numbers may run together with no separator whenever unambiguous,
         // e.g. "50-30" (sign starts a new number), ".5.5" (a second '.' starts a new number) or "1e-3"
         // (the exponent belongs to the same number it follows).
-        private static bool TryReadNumber(string s, ref int pos, out double value)
+        // shared with SvgFileExtractor, which reuses the same number grammar to read rect/circle/ellipse/
+        // polyline/polygon geometry attributes (e.g. the "points" list)
+        internal static bool TryReadNumber(string s, ref int pos, out double value)
         {
             SkipCommaWsp(s, ref pos);
             int start = pos;
@@ -552,7 +627,7 @@ namespace SVGPathTwicker
 
         // An elliptical-arc flag is always exactly one '0' or '1' character, so it is never ambiguous
         // even when packed directly against neighbouring numbers (e.g. "0125,25" = flag,flag,25,25).
-        private static bool TryReadFlag(string s, ref int pos, out bool flag)
+        internal static bool TryReadFlag(string s, ref int pos, out bool flag)
         {
             SkipCommaWsp(s, ref pos);
             if (pos < s.Length && (s[pos] == '0' || s[pos] == '1'))
