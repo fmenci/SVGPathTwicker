@@ -14,7 +14,7 @@ You should have received a copy of the GNU General Public License along with Foo
 
  * */
 
-using System.Security.Cryptography.X509Certificates;
+using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -22,16 +22,37 @@ namespace SVGPathTwicker
 {
     public class SvgFileExtractor
     {
-        private const string STARTUPDIR = @"C:\Temp\Svg\";
+        public const string DefaultSourceDirectory = @"C:\Temp\Svg\";
+        private readonly string SourceDirectory;
         private readonly List<SvgPathMapElement> AllPath = [];
-        private readonly Regex rexDrawing = new(@"\s*d=\u0022(?<drawingdata>[0-9mMzZlLcChHvVaAqQtTsSeE ,.-]+)\u0022", RegexOptions.CultureInvariant);
-        private readonly Regex rexGrabPaths = new(@"<path\s+(?<pathgrab>[^>]+)/>", RegexOptions.Multiline);
-        private readonly Regex rexId = new(@"\s*id=\u0022(?<idattr>[0-9a-zA-Z_-]+)\u0022", RegexOptions.CultureInvariant);
-        private readonly Regex rexCssClass = new(@"\s*class=\u0022(?<classattr>[0-9a-zA-Z_-]+)\u0022", RegexOptions.CultureInvariant);
-        private readonly Regex rexCssStyle = new(@"\s*style=\u0022(?<styleattr>[^\u0022*]+)\u0022", RegexOptions.CultureInvariant);
-        private readonly Regex rexTransformTranslate = new(@"\s*transform=\u0022translate\((?<translatex>[0-9-]+),(?<translatey>[0-9-]+)\)\u0022", RegexOptions.CultureInvariant);
-        public SvgFileExtractor() { 
-            
+
+        // attribute values may be single- or double-quoted (both are valid XML/SVG, any spec version)
+        private const string QUOTE = @"(?<q>[""'])";
+        private const string ENDQUOTE = @"\k<q>";
+        // an attribute name never starts mid-identifier, so this guards e.g. "d=" from matching inside "id="
+        private const string ATTR_START = @"(?<![A-Za-z0-9_:.-])";
+
+        // a path element with no children may be self-closed, or written as an explicit open/close pair
+        private readonly Regex rexGrabPaths = new(@"<path\s+(?<pathgrab>[^>]+?)\s*(?:/>|>\s*</path\s*>)", RegexOptions.Multiline);
+        private readonly Regex rexDrawing = new(ATTR_START + @"d=" + QUOTE + @"(?<drawingdata>[0-9mMzZlLcChHvVaAqQtTsSeE ,.-]+)" + ENDQUOTE, RegexOptions.CultureInvariant);
+        private readonly Regex rexId = new(ATTR_START + @"id=" + QUOTE + @"(?<idattr>[0-9a-zA-Z_-]+)" + ENDQUOTE, RegexOptions.CultureInvariant);
+        private readonly Regex rexCssClass = new(ATTR_START + @"class=" + QUOTE + @"(?<classattr>[0-9a-zA-Z_-]+)" + ENDQUOTE, RegexOptions.CultureInvariant);
+        private readonly Regex rexCssStyle = new(ATTR_START + @"style=" + QUOTE + @"(?<styleattr>[^""']+)" + ENDQUOTE, RegexOptions.CultureInvariant);
+
+        // a translate() offset: sign/decimals allowed (e.g. translate(139.99999,77.47527)), and the y component is
+        // optional per the SVG spec (translate(x) implies y=0)
+        private const string TRANSLATE_NUMBER = @"-?[0-9]*\.?[0-9]+";
+        private readonly Regex rexTransformTranslate = new(
+            ATTR_START + @"transform=" + QUOTE + @"translate\(\s*(?<translatex>" + TRANSLATE_NUMBER + @")(?:\s*[,\s]\s*(?<translatey>" + TRANSLATE_NUMBER + @"))?\s*\)" + ENDQUOTE,
+            RegexOptions.CultureInvariant);
+        // SVG2 also allows `transform` to be set as a CSS property (e.g. style="transform: translate(10px,20px)")
+        private readonly Regex rexCssTransformTranslate = new(
+            @"transform\s*:\s*translate\(\s*(?<translatex>" + TRANSLATE_NUMBER + @")(?:px)?(?:\s*[,\s]\s*(?<translatey>" + TRANSLATE_NUMBER + @")(?:px)?)?\s*\)",
+            RegexOptions.CultureInvariant);
+
+        public SvgFileExtractor(string? sourceDirectory = null)
+        {
+            SourceDirectory = string.IsNullOrWhiteSpace(sourceDirectory) ? DefaultSourceDirectory : sourceDirectory;
         }
 
         public async Task Init()
@@ -50,13 +71,19 @@ namespace SVGPathTwicker
             strOutput.Append("Layer;Category;Name;Row;");
             strOutput.Append(SvgPathMapElement.CSVHeader);
             int irow = 0;
-            string[] files = Directory.GetFiles(STARTUPDIR, "*.svg");
-            Console.WriteLine("fetching all *.svg files from {0}", STARTUPDIR);
+            if (!Directory.Exists(SourceDirectory))
+            {
+                Console.WriteLine("source directory not found: {0}", SourceDirectory);
+                return;
+            }
+            string[] files = Directory.GetFiles(SourceDirectory, "*.svg");
+            Console.WriteLine("fetching all *.svg files from {0}", SourceDirectory);
             foreach (string file in files)
             {
                 string filename = Path.GetFileNameWithoutExtension(file);
                 string robotfile = await File.ReadAllTextAsync(file);
                 var m = rexGrabPaths.Matches(robotfile);
+                int autoNameIndex = 0;
                 foreach (Match mGrab in m)
                 {
                     //Console.WriteLine("***");
@@ -81,6 +108,11 @@ namespace SVGPathTwicker
                                 pathid = pathid.Substring(indUnderscore+1);
                             }
                         }
+                        if (string.IsNullOrEmpty(pathid))
+                        {
+                            // element has no usable id: autogenerate a name unique within the file
+                            pathid = $"path{++autoNameIndex}";
+                        }
                         //Console.WriteLine("category : {0} - name : {1}", category, pathid);
                         string classname = string.Empty;
                         var mCssClass = rexCssClass.Match(pathElement);
@@ -101,16 +133,18 @@ namespace SVGPathTwicker
                         var mtransform = rexTransformTranslate.Match(pathElement);
                         if (mtransform.Success)
                         {
-                            if (int.TryParse(mtransform.Groups["translatex"].Value, out int foundx))
-                            {
-                                translatex = foundx;
-                            }
-                            if (int.TryParse(mtransform.Groups["translatey"].Value, out int foundy))
-                            {
-                                translatey = foundy;
-                            }
-                            //Console.WriteLine("move pen to : {0}, {1}", translatex, translatey);
+                            ParseTranslate(mtransform.Groups["translatex"], mtransform.Groups["translatey"], out translatex, out translatey);
                         }
+                        else if (!string.IsNullOrEmpty(cssStyle))
+                        {
+                            // no `transform` attribute: SVG2 also allows it as a CSS property in `style`
+                            var mCssTransform = rexCssTransformTranslate.Match(cssStyle);
+                            if (mCssTransform.Success)
+                            {
+                                ParseTranslate(mCssTransform.Groups["translatex"], mCssTransform.Groups["translatey"], out translatex, out translatey);
+                            }
+                        }
+                        //Console.WriteLine("move pen to : {0}, {1}", translatex, translatey);
 
                         drawingPath = mdrawing.Groups["drawingdata"].Value;
                         SvgPathMapElement svgPathMap = new(translatex, translatey, drawingPath);
@@ -150,9 +184,25 @@ namespace SVGPathTwicker
                 }
             }
 
-            using StreamWriter sw = new(Path.Combine(STARTUPDIR, "export_svg.csv"));
+            using StreamWriter sw = new(Path.Combine(SourceDirectory, "export_svg.csv"));
             await sw.WriteAsync(strOutput.ToString());
             Console.WriteLine("SVG Path extract ready");
+        }
+
+        // translate() y is optional (translate(x) implies y=0), and values may carry decimals: truncate to
+        // int like every other coordinate in this tool.
+        private static void ParseTranslate(Group xGroup, Group yGroup, out int translatex, out int translatey)
+        {
+            translatex = 0;
+            translatey = 0;
+            if (xGroup.Success && double.TryParse(xGroup.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out double foundx))
+            {
+                translatex = (int)foundx;
+            }
+            if (yGroup.Success && double.TryParse(yGroup.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out double foundy))
+            {
+                translatey = (int)foundy;
+            }
         }
     }
 }

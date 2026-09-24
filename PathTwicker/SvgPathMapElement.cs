@@ -25,7 +25,10 @@ namespace SVGPathTwicker
         CubicBezier = 2,
         Horizontal = 4,
         Vertical = 8,
-        Arc = 16
+        Arc = 16,
+        QuadraticBezier = 32,
+        SmoothCubic = 64,
+        SmoothQuadratic = 128
     }
 
     public class SvgPathMapElement
@@ -114,6 +117,8 @@ namespace SVGPathTwicker
 
         private PenMovementType PenMove = PenMovementType.None;
 
+        private bool SubpathClosed = true;
+
         private readonly StringBuilder ImprovedPath = new ();
 
         private void MovePen(Point p)
@@ -168,15 +173,22 @@ namespace SVGPathTwicker
                         else
                         {
                             PathStartPoint = PenOnPaper;
+                            if (!SubpathClosed)
+                            {
+                                // previous subpath never closed: force it before starting the next one
+                                ImprovedPath.Append(" z");
+                            }
                             ImprovedPath.Append(' ');
                         }
                         ImprovedPath.AppendFormat("m {0},{1}", buffer_point1.X, buffer_point1.Y);
+                        SubpathClosed = false;
                         break;
                     case "z":
                     case "Z": // all is converted to relative coordinate anyway
                         PenMove = PenMovementType.None;
                         PenOnPaper = PathStartPoint;
                         ImprovedPath.Append(" z");
+                        SubpathClosed = true;
                         break;
                     case "l":
                     case "L":
@@ -265,6 +277,50 @@ namespace SVGPathTwicker
                         ImprovedPath.AppendFormat(" {0}", buffer_sweep ? 1 : 0);
                         ImprovedPath.AppendFormat(" {0},{1}", buffer_point_P2.X, buffer_point_P2.Y);
                         break;
+                    case "q":
+                    case "Q":
+                        InAbsoluteCoord = (plot == "Q");
+                        PenMove = PenMovementType.QuadraticBezier;
+                        buffer_point1 = ReadPlot(arrInPath, ref ipos);
+                        buffer_point_P2 = ReadPlot(arrInPath, ref ipos);
+                        if (InAbsoluteCoord)
+                        {
+                            buffer_point1 = ToRelativeCoord(buffer_point1);
+                            buffer_point_P2 = ToRelativeCoord(buffer_point_P2);
+                        }
+                        MovePen(buffer_point_P2);
+                        ImprovedPath.Append(" q");
+                        ImprovedPath.AppendFormat(" {0},{1}", buffer_point1.X, buffer_point1.Y);
+                        ImprovedPath.AppendFormat(" {0},{1}", buffer_point_P2.X, buffer_point_P2.Y);
+                        break;
+                    case "t":
+                    case "T":
+                        InAbsoluteCoord = (plot == "T");
+                        PenMove = PenMovementType.SmoothQuadratic;
+                        buffer_point1 = ReadPlot(arrInPath, ref ipos);
+                        if (InAbsoluteCoord)
+                        {
+                            buffer_point1 = ToRelativeCoord(buffer_point1);
+                        }
+                        MovePen(buffer_point1);
+                        ImprovedPath.AppendFormat(" t {0},{1}", buffer_point1.X, buffer_point1.Y);
+                        break;
+                    case "s":
+                    case "S":
+                        InAbsoluteCoord = (plot == "S");
+                        PenMove = PenMovementType.SmoothCubic;
+                        buffer_point1 = ReadPlot(arrInPath, ref ipos);
+                        buffer_point_P2 = ReadPlot(arrInPath, ref ipos);
+                        if (InAbsoluteCoord)
+                        {
+                            buffer_point1 = ToRelativeCoord(buffer_point1);
+                            buffer_point_P2 = ToRelativeCoord(buffer_point_P2);
+                        }
+                        MovePen(buffer_point_P2);
+                        ImprovedPath.Append(" s");
+                        ImprovedPath.AppendFormat(" {0},{1}", buffer_point1.X, buffer_point1.Y);
+                        ImprovedPath.AppendFormat(" {0},{1}", buffer_point_P2.X, buffer_point_P2.Y);
+                        break;
                     default:
                         try
                         {
@@ -343,6 +399,42 @@ namespace SVGPathTwicker
                                     ImprovedPath.AppendFormat(" {0}", buffer_sweep ? 1 : 0);
                                     ImprovedPath.AppendFormat(" {0},{1}", buffer_point_P2.X, buffer_point_P2.Y);
                                     break;
+                                case PenMovementType.QuadraticBezier:
+                                    --ipos; // one step back
+                                    buffer_point1 = ReadPlot(arrInPath, ref ipos);
+                                    buffer_point_P2 = ReadPlot(arrInPath, ref ipos);
+                                    if (InAbsoluteCoord)
+                                    {
+                                        buffer_point1 = ToRelativeCoord(buffer_point1);
+                                        buffer_point_P2 = ToRelativeCoord(buffer_point_P2);
+                                    }
+                                    MovePen(buffer_point_P2);
+                                    ImprovedPath.AppendFormat(" {0},{1}", buffer_point1.X, buffer_point1.Y);
+                                    ImprovedPath.AppendFormat(" {0},{1}", buffer_point_P2.X, buffer_point_P2.Y);
+                                    break;
+                                case PenMovementType.SmoothQuadratic:
+                                    --ipos; // one step back
+                                    buffer_point1 = ReadPlot(arrInPath, ref ipos);
+                                    if (InAbsoluteCoord)
+                                    {
+                                        buffer_point1 = ToRelativeCoord(buffer_point1);
+                                    }
+                                    MovePen(buffer_point1);
+                                    ImprovedPath.AppendFormat(" {0},{1}", buffer_point1.X, buffer_point1.Y);
+                                    break;
+                                case PenMovementType.SmoothCubic:
+                                    --ipos; // one step back
+                                    buffer_point1 = ReadPlot(arrInPath, ref ipos);
+                                    buffer_point_P2 = ReadPlot(arrInPath, ref ipos);
+                                    if (InAbsoluteCoord)
+                                    {
+                                        buffer_point1 = ToRelativeCoord(buffer_point1);
+                                        buffer_point_P2 = ToRelativeCoord(buffer_point_P2);
+                                    }
+                                    MovePen(buffer_point_P2);
+                                    ImprovedPath.AppendFormat(" {0},{1}", buffer_point1.X, buffer_point1.Y);
+                                    ImprovedPath.AppendFormat(" {0},{1}", buffer_point_P2.X, buffer_point_P2.Y);
+                                    break;
                                 default:
                                     Console.WriteLine("unrecognised plot {0}", plot);
                                     break;
@@ -357,6 +449,12 @@ namespace SVGPathTwicker
                         break;
                 }
                 ipos++;
+            }
+            if (!SubpathClosed)
+            {
+                // every path shall close using 'z', even if the source omitted it
+                ImprovedPath.Append(" z");
+                SubpathClosed = true;
             }
         }
 

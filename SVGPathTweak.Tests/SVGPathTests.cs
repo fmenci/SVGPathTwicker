@@ -19,6 +19,15 @@ namespace SVGPathTweak.Tests
         [TestCase("m 836.8079,1313.086 v -90 h -5 v 85 H 386.80788 v -85 h -5 v 90 z", ExpectedResult = "m 0,0 v -90 h -5 v 85 h -1281 v -85 h -5 v 90 z")]
         [TestCase("m 503.66631,900.7741 v 138 h -138 v 4 h 138 v 138 h 4 v -138 H 645.6663 v -4 H 507.66631 v -138 z", ExpectedResult = "m 0,0 v 138 h -138 v 4 h 138 v 138 h 4 v -138 h -365 v -4 h -138 v -138 z")]
         [TestCase("m 505.66631,1090.7741 a 50,50 0 0 0 49.99999,-50 50,50 0 0 0 -49.99999,-50 50,50 0 0 0 -50,50 50,50 0 0 0 50,50 z m 0,-2 a 48,48 0 0 1 -48,-48 48,48 0 0 1 48,-48 48,48 0 0 1 47.99999,48 48,48 0 0 1 -47.99999,48 z m 0,52 a 100,100 0 0 0 99.99999,-100 100,100 0 0 0 -99.99999,-100 100,100 0 0 0 -100,100 100,100 0 0 0 100,100 z m 0,-2 a 98,98 0 0 1 -98,-98 98,98 0 0 1 98,-98 98,98 0 0 1 97.99999,98 98,98 0 0 1 -97.99999,98 z", ExpectedResult = "m 0,0 a 50,50 0 0 0 49,-50 50,50 0 0 0 -49,-50 50,50 0 0 0 -50,50 50,50 0 0 0 50,50 z m 0,-2 a 48,48 0 0 1 -48,-48 48,48 0 0 1 48,-48 48,48 0 0 1 47,48 48,48 0 0 1 -47,48 z m 0,52 a 100,100 0 0 0 99,-100 100,100 0 0 0 -99,-100 100,100 0 0 0 -100,100 100,100 0 0 0 100,100 z m 0,-2 a 98,98 0 0 1 -98,-98 98,98 0 0 1 98,-98 98,98 0 0 1 97,98 98,98 0 0 1 -97,98 z")]
+        // path missing its closing 'z' shall be force-closed
+        [TestCase("m 0,0 10,0 0,10 -10,0", ExpectedResult = "m 0,0 10,0 0,10 -10,0 z")]
+        // second subpath missing 'z' before the next 'm' shall also be force-closed
+        [TestCase("m 0,0 10,0 0,10 m 20,20 5,0 0,5", ExpectedResult = "m 0,0 10,0 0,10 z m 20,20 5,0 0,5 z")]
+        // quadratic bezier 'q', smooth quadratic 't' and smooth cubic 's'
+        [TestCase("m 10.4,20.6 q 5,5 10,0 t 10,0 z", ExpectedResult = "m 0,0 q 5,5 10,0 t 10,0 z")]
+        [TestCase("M 10,20 Q 20,10 30,20 T 50,20 z", ExpectedResult = "m 0,0 q 0,-30 10,-20 t 20,0 z")]
+        [TestCase("m 10.4,20.6 s 5,-5 10,0 z", ExpectedResult = "m 0,0 s 5,-5 10,0 z")]
+        [TestCase("M 10,20 S 20,10 30,20 z", ExpectedResult = "m 0,0 s 0,-30 10,-20 z")]
         public string Test1(string drawingPath)
         {
             SvgPathMapElement svgPathMap = new(0,0,drawingPath);
