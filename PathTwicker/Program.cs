@@ -17,7 +17,9 @@ using SVGPathTwicker;
 Console.WriteLine("SVG path optimizer, by Franck Menci \u00A9 2025");
 Console.WriteLine("read file from Inkscape and aims to improve SVG path `d` attribute");
 
-SvgFileExtractor fileExtractor = new();
+// source directory: command-line argument, else SVGPATHTWICKER_SOURCE_DIR env var, else the built-in default
+string? sourceDirectory = args.Length > 0 ? args[0] : Environment.GetEnvironmentVariable("SVGPATHTWICKER_SOURCE_DIR");
+SvgFileExtractor fileExtractor = new(sourceDirectory);
 
 Task t = Task.Run(async () => { await fileExtractor.Init(); });
 await t;
